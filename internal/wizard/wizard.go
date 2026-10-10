@@ -141,8 +141,14 @@ func AbbrevHome(path, goos string) (string, bool) {
 	sep := string(filepath.Separator)
 	if strings.HasPrefix(clean, userHome+sep) {
 		rest := strings.TrimPrefix(clean, userHome+sep)
+		// 缩出来的这一行是给人照抄**目标平台**的命令，所以分隔符也按 goos 走：
+		// 宿主是 Windows 而目标是 darwin 时（测试里就会这么调），也得是
+		// $HOME/cot/bin 而不是 $HOME/cot\bin。
+		if sep != Sep(goos) {
+			rest = strings.ReplaceAll(rest, sep, Sep(goos))
+		}
 		if goos == "windows" {
-			return `%USERPROFILE%\` + strings.ReplaceAll(rest, "/", `\`), true
+			return `%USERPROFILE%\` + rest, true
 		}
 		return "$HOME/" + rest, true
 	}
@@ -170,7 +176,7 @@ func UninstallArgv(home, id, goos string) (string, []string) {
 func UninstallDisplay(home, id, goos string) string {
 	display := Join(goos, home, "bin", "gpm")
 	if abbrev, ok := AbbrevHome(home, goos); ok {
-		display = abbrev + "/bin/gpm"
+		display = Join(goos, abbrev, "bin", "gpm")
 	}
 	return fmt.Sprintf("%s uninstall %s --yes", display, id)
 }

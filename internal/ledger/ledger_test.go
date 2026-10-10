@@ -72,10 +72,10 @@ func TestLoadAndFind(t *testing.T) {
 	if !pkg.Verified {
 		t.Fatal("verified 该是 true")
 	}
-	if got := pkg.PathEditFiles(); len(got) != 1 || got[0] != filepath.Join("/tmp/home", ".zshrc") {
+	if got := pkg.PathEditFiles(); len(got) != 1 || got[0] != "/tmp/home/.zshrc" {
 		t.Fatalf("PathEditFiles = %v", got)
 	}
-	if got := pkg.LinkPaths(); len(got) != 1 || got[0] != filepath.Join("/tmp/home", "Applications", "AI Desk.app") {
+	if got := pkg.LinkPaths(); len(got) != 1 || got[0] != "/tmp/home/Applications/AI Desk.app" {
 		t.Fatalf("LinkPaths = %v", got)
 	}
 	if led.Find("nope") != nil {

@@ -26,11 +26,13 @@ func TestArgsNoPathWhenUnchecked(t *testing.T) {
 	}
 }
 
+// 期望值写成目标平台的字符串，不用 filepath.Join —— 那是**宿主**的规矩，
+// 于是这些用例在 Windows 上跑就红了（实现本来就是按 goos 切的）。
 func TestScriptPerOS(t *testing.T) {
-	if got := Script("/pkg", "darwin"); got != filepath.Join("/pkg", "install.sh") {
+	if got := Script("/pkg", "darwin"); got != "/pkg/install.sh" {
 		t.Fatalf("darwin 该走 install.sh，得到 %s", got)
 	}
-	if got := Script("/pkg", "linux"); got != filepath.Join("/pkg", "install.sh") {
+	if got := Script("/pkg", "linux"); got != "/pkg/install.sh" {
 		t.Fatalf("linux 该走 install.sh，得到 %s", got)
 	}
 	if got := Script(`C:\pkg`, "windows"); got != `C:\pkg\install.cmd` {
@@ -55,7 +57,7 @@ func TestArgvWindowsWrapsWithCmdAndNul(t *testing.T) {
 func TestArgvUnixRunsScriptDirectly(t *testing.T) {
 	c := Choice{Home: "/tmp/home/cot", Toolchain: "cot"}
 	prog, args := Argv("/pkg", c, "darwin")
-	if prog != filepath.Join("/pkg", "install.sh") {
+	if prog != "/pkg/install.sh" {
 		t.Fatalf("prog = %s", prog)
 	}
 	want := []string{"--dir", "/tmp/home/cot", "--with", "cot", "--no-path"}
@@ -100,8 +102,10 @@ func TestAbbrevHome(t *testing.T) {
 	}{
 		{userHome, "darwin", "$HOME", true},
 		{userHome, "windows", "%USERPROFILE%", true},
-		{filepath.Join(userHome, "cot"), "darwin", "$HOME/cot", true},
-		{filepath.Join(userHome, "cot", "bin"), "darwin", "$HOME/cot/bin", true},
+		{userHome + "/cot", "darwin", "$HOME/cot", true},
+		{userHome + "/cot/bin", "darwin", "$HOME/cot/bin", true},
+		{userHome + "/cot", "windows", `%USERPROFILE%\cot`, true},
+		{userHome + "/cot/bin", "windows", `%USERPROFILE%\cot\bin`, true},
 		{"/opt/somewhere", "darwin", "", false},
 	}
 	for _, tc := range cases {
@@ -123,7 +127,7 @@ func TestDefaultHome(t *testing.T) {
 
 func TestUninstall(t *testing.T) {
 	prog, args := UninstallArgv("/tmp/home/cot", "ai-desk", "darwin")
-	if prog != filepath.Join("/tmp/home/cot", "bin", "gpm") {
+	if prog != "/tmp/home/cot/bin/gpm" {
 		t.Fatalf("prog = %s", prog)
 	}
 	if !reflect.DeepEqual(args, []string{"uninstall", "ai-desk", "--yes"}) {

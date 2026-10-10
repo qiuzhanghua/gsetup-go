@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -71,6 +72,16 @@ func requirePty(t *testing.T) {
 	_ = m.Close()
 }
 
+// 下面几条要真在 pty 里起一个 #!/bin/sh 脚本（或者就着一份 sh 写的假 gpm）：
+// Windows 上装进包里的是 install.cmd / gpm.exe，起不来 POSIX 脚本，那一支
+// 由 TestStartWindowsRunsCmd 覆盖。
+func requirePosixShell(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows 走的是 install.cmd / cmd.exe，pty 里起不来 #!/bin/sh")
+	}
+}
+
 // collector 把事件收下来，顶替真正的窗口。
 type collector struct {
 	mu     sync.Mutex
@@ -133,7 +144,10 @@ func TestBootstrapReadsPackage(t *testing.T) {
 	if !st.HasSetup {
 		t.Fatal("清单里有 setup: darwin，该报 true")
 	}
-	if st.Script != filepath.Join(pkg, "install.sh") {
+	// 这个 App 是钉在 darwin 上的（newTestApp），所以期望值也写成
+	// 目标平台的字符串，不用 filepath.Join —— 那是宿主的规矩，
+	// 在 Windows 上跑就会得到 \，而实现走的是 goos。
+	if st.Script != pkg+"/install.sh" {
 		t.Fatalf("Script = %s", st.Script)
 	}
 	if st.DefaultToolchain != "cot" {
@@ -173,7 +187,7 @@ func TestPlanCommandLine(t *testing.T) {
 	if !p.OK {
 		t.Fatalf("该能规划，得到 %s", p.Message)
 	}
-	if p.Program != filepath.Join(pkg, "install.sh") {
+	if p.Program != pkg+"/install.sh" {
 		t.Fatalf("Program = %s", p.Program)
 	}
 	want := []string{"--dir", filepath.Join(home, "cot"), "--with", "cot", "--yes"}
@@ -294,6 +308,7 @@ func TestStartRunsScriptInPty(t *testing.T) {
 	script := "#!/bin/sh\necho \"装到 $2\"\necho oops 1>&2\nexit 0\n"
 	pkg := fakePackage(t, script)
 	a, home := newTestApp(t, pkg)
+	requirePosixShell(t)
 	requirePty(t)
 	c := &collector{}
 	a.emitHook = c.hook
@@ -319,6 +334,7 @@ func TestStartRunsScriptInPty(t *testing.T) {
 func TestStartReportsFailure(t *testing.T) {
 	pkg := fakePackage(t, "#!/bin/sh\nexit 7\n")
 	a, _ := newTestApp(t, pkg)
+	requirePosixShell(t)
 	requirePty(t)
 	c := &collector{}
 	a.emitHook = c.hook
@@ -335,6 +351,7 @@ func TestStartReportsFailure(t *testing.T) {
 func TestUninstallCallsGpmInHome(t *testing.T) {
 	pkg := fakePackage(t, "#!/bin/sh\nexit 0\n")
 	a, home := newTestApp(t, pkg)
+	requirePosixShell(t)
 	requirePty(t)
 	cot := filepath.Join(home, "cot")
 	write(t, filepath.Join(cot, "cot-state.json"),
@@ -472,7 +489,7 @@ func TestPlanUninstallListsWhatWillGo(t *testing.T) {
 	if !strings.Contains(p.Display, "uninstall ai-desk --yes") {
 		t.Fatalf("Display = %q", p.Display)
 	}
-	if !strings.HasSuffix(p.Program, filepath.Join("bin", "gpm")) {
+	if !strings.HasSuffix(p.Program, "bin/gpm") {
 		t.Fatalf("Program = %s", p.Program)
 	}
 	if p.Warning == "" {
@@ -512,6 +529,7 @@ func jsonString(s string) string {
 func TestStartRejectsConcurrentRun(t *testing.T) {
 	pkg := fakePackage(t, "#!/bin/sh\nsleep 2\nexit 0\n")
 	a, _ := newTestApp(t, pkg)
+	requirePosixShell(t)
 	requirePty(t)
 
 	done := make(chan gsrunner.Result, 1)
@@ -536,4 +554,37 @@ func TestStartRejectsConcurrentRun(t *testing.T) {
 		t.Fatalf("第二条该被拒，得到 %+v", second)
 	}
 	<-done
+}
+
+// Windows 那一支：pty 里起的是 cmd.exe /c install.cmd … < NUL（wizard.Argv 拼的），
+// 退出码要原样传回来。这条只在 Windows 上跑 —— 它要的就是一个真的 cmd.exe。
+func TestStartWindowsRunsCmd(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("只在 Windows 上跑（要真的 cmd.exe）")
+	}
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "ad-manifest.yaml"), manifestYAML, 0o644)
+	// %2 就是 --dir 后面那个家：cmd 的 %0 是脚本本身。
+	write(t, filepath.Join(dir, "install.cmd"), "@echo off\r\necho 装到 %2\r\nexit /b 7\r\n", 0o644)
+	if err := os.MkdirAll(filepath.Join(dir, "payload", "AI Desk.app", "Contents", "MacOS"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	t.Setenv(pkgroot.EnvOverride, dir)
+	a := &App{goos: "windows", homeOverride: home}
+	requirePty(t)
+	c := &collector{}
+	a.emitHook = c.hook
+
+	res := a.Start("cot", "", true)
+	if res.Success || res.Code != 7 {
+		t.Fatalf("该报失败 7，得到 %+v", res)
+	}
+	if res.Message() != "失败（退出码 7）" {
+		t.Fatalf("Message = %q", res.Message())
+	}
+	lines := append(c.text(gsrunner.StreamStdout), c.text(gsrunner.StreamStderr)...)
+	if !strings.Contains(strings.Join(lines, "|"), home) {
+		t.Fatalf("install.cmd 该收到 --dir %s，pty 里只看到 %q", home, lines)
+	}
 }

@@ -69,7 +69,7 @@ func (a *App) ensure() error {
 	root, name, err := pkgroot.FindFromExecutable()
 	if err != nil {
 		exe, _ := os.Executable()
-		a.loadErr = rootHint(exe, err)
+		a.loadErr = rootHint(a.goos, exe, err)
 		return fmt.Errorf("%s", a.loadErr)
 	}
 	man, err := manifest.Parse(filepath.Join(root, name))
@@ -83,9 +83,16 @@ func (a *App) ensure() error {
 
 // rootHint 把"找不着包根"翻成一句能照着做的话。
 //
-// 最要紧的是分得清两种情形：macOS 把 app 挪进只读临时目录了（用户什么都没做错，
-// 让他"放回去"没有用），还是他真的把 GUI-Setup 单独拷到别处去了。
-func rootHint(exe string, err error) string {
+// 要紧的是分得清三种情形：
+//
+//  1. macOS 把 app 挪进只读临时目录了（App Translocation）—— 用户什么都没做错，
+//     让他"放回去"没有用；
+//  2. Windows 上"在压缩包里直接双击"—— 资源管理器只把这一个文件解到临时目录去跑，
+//     用户同样什么都没做错，而且看不到自己跑到哪儿去了；
+//  3. 他真的把 GUI-Setup 单独拷到别处去了 —— 这时"放回去"才是对的。
+//
+// goos 是参数而不是 runtime.GOOS：测试要在任何平台上都能验这三种话术。
+func rootHint(goos, exe string, err error) string {
 	if pkgroot.LooksTranslocated(exe) {
 		return "macOS 把 GUI-Setup 挪到一个只读的临时目录里跑起来了（App Translocation —— 带" +
 			"「下载」标记的 app 双击时系统就这么干），在那儿看不见解压出来的 install.sh 与清单。" +
@@ -93,7 +100,16 @@ func rootHint(exe string, err error) string {
 			"`xattr -dr com.apple.quarantine <解压出来的目录>` 之后再双击它。" +
 			"（也可以直接跑 ./install.sh，命令行这条路不受影响。）\n原始错误：" + err.Error()
 	}
-	return err.Error() + "。请把 GUI-Setup 放回解压出来的目录里再运行，" +
+	if goos == "windows" && pkgroot.LooksZipPreview(exe) {
+		return "你是**在压缩包里直接双击** GUI-Setup 的：Windows 资源管理器只把这一个文件解到临时" +
+			"目录里去运行，它身边既没有清单也没有 install.cmd，往上找是白找 —— 这不是你放错了。" +
+			"请右键那个 zip →「全部解压缩…」，在解出来的文件夹里双击 GUI-Setup.exe" +
+			"（它应该和 *-manifest.yaml、install.cmd 并排）。" +
+			"要是你已经另外解压过一份，也可以点下面的「自己选包目录」直接挑那一层。" +
+			"\n原始错误：" + err.Error()
+	}
+	return err.Error() + "。请把 GUI-Setup 放回解压出来的目录里再运行" +
+		"（那一层应该有 *-manifest.yaml 与 " + wizard.ScriptName(goos) + "），" +
 		"或者点下面的「自己选包目录」自己挑一下。"
 }
 
@@ -105,7 +121,7 @@ func (a *App) useRoot(dir string) error {
 	}
 	switch len(names) {
 	case 0:
-		return fmt.Errorf("%s 里没有 <简称>-manifest.yaml —— 要选解压出来、和 install.sh 并排的那一层", dir)
+		return fmt.Errorf("%s 里没有 *-manifest.yaml —— 要选解压出来、和 %s 并排的那一层", dir, wizard.ScriptName(a.goos))
 	case 1:
 	default:
 		return fmt.Errorf("%s 里有 %d 份清单（%s），说不清该用哪一份", dir, len(names), strings.Join(names, "、"))
@@ -141,7 +157,7 @@ func (a *App) PickRoot() State {
 // openDirectoryDialog 是正式实现；测试里换成 pickFolder 那个钩子。
 func (a *App) openDirectoryDialog(ctx context.Context) (string, error) {
 	return wailsruntime.OpenDirectoryDialog(ctx, wailsruntime.OpenDialogOptions{
-		Title:                "选解压出来的那个目录（里面应该有 <简称>-manifest.yaml 与 install.sh）",
+		Title:                "选解压出来的那个目录（里面应该有 *-manifest.yaml 与 " + wizard.ScriptName(a.goos) + "）",
 		DefaultDirectory:     a.defaultPickDir(),
 		CanCreateDirectories: false,
 	})

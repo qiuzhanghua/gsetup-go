@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -25,7 +26,10 @@ const EnvOverride = "GSETUP_ROOT"
 const maxDepth = 8
 
 // ErrNotFound 表示从起点一路向上都没找到清单。
-var ErrNotFound = errors.New("没找到包根（一路向上都没有找着 <简称>-manifest.yaml）")
+//
+// 不写 `<简称>` 那种占位符：简称是**从清单里读出来**的，还没找着清单时根本不知道
+// 它是什么，印一个尖括号只会让人以为要自己替换。
+var ErrNotFound = errors.New("没找到包根（从自己所在的位置往上，一路都没有找着 *-manifest.yaml）")
 
 // TranslocatedMark 是 macOS 把下载来的 app 挪进只读临时目录后，路径里必然有的那一段。
 //
@@ -40,6 +44,35 @@ const TranslocatedMark = "/AppTranslocation/"
 // LooksTranslocated 看这个路径是不是 App Translocation 那个只读临时目录里的。
 func LooksTranslocated(path string) bool {
 	return strings.Contains(filepath.ToSlash(path), TranslocatedMark)
+}
+
+// tempZipMark 是 Windows 资源管理器"在压缩包里直接双击"留下的临时目录名：
+// Temp<N>_<压缩包名>.zip。
+//
+// 资源管理器对压缩包只做**单文件**临时解压：双击里面的 GUI-Setup.exe 时，它把这一个
+// 文件解到 %TEMP%\Temp1_<压缩包名>.zip\ 再启动，进程退出后连那份临时目录都清掉。于是
+// exe 身边既没有清单也没有 install.cmd，往上爬到 C:\ 也是白爬 —— 用户看到的还是
+// "没找到包根"，而且**看不到自己被解到哪儿去了**。
+var tempZipMark = regexp.MustCompile(`(?i)^Temp\d+_.+\.zip$`)
+
+// LooksZipPreview 报告这个路径是不是资源管理器为"在压缩包里双击"临时解出来的那一份。
+//
+// 与 LooksTranslocated 对称，但责任方完全不同：那边是 macOS 的**系统**行为
+// （App Translocation），这边是 Windows **资源管理器**解压单个文件的行为 —— 系统
+// 没碰过用户的包。
+//
+// 只看路径里有没有 Temp<N>_….zip 这一段，不要求它落在 os.TempDir() 之下：有人会把
+// TEMP 指到别处，而这段名字本身已经够特征（正常解压不会解出这种目录名）。
+//
+// 故意**不**做"只要在临时目录下就算"那种更宽的判断：Go 自己编译测试时把二进制放在
+// `%TEMP%\go-build<N>\…`，那会让本仓库自己的用例在 Windows 上误判成"压缩包预览"。
+func LooksZipPreview(path string) bool {
+	for _, part := range strings.Split(filepath.ToSlash(filepath.Clean(path)), "/") {
+		if tempZipMark.MatchString(part) {
+			return true
+		}
+	}
+	return false
 }
 
 // Manifests 列出 dir 下所有 <简称>-manifest.yaml 的文件名（只列一层）。

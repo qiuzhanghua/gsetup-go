@@ -184,7 +184,7 @@ func TestBootstrapWithoutPackage(t *testing.T) {
 // 那句话得说清"这不是你放错了"，并且给两条能走的路。
 func TestRootHintKnowsAboutTranslocation(t *testing.T) {
 	exe := "/private/var/folders/cc/xx/T/AppTranslocation/2ED1/d/GUI-Setup.app/Contents/MacOS/GUI-Setup"
-	msg := rootHint(exe, pkgroot.ErrNotFound)
+	msg := rootHint("darwin", exe, pkgroot.ErrNotFound)
 	for _, want := range []string{"App Translocation", "xattr -dr com.apple.quarantine", "自己选包目录", pkgroot.ErrNotFound.Error()} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("被挪走时那句话里该有 %q，得到：%s", want, msg)
@@ -195,14 +195,39 @@ func TestRootHintKnowsAboutTranslocation(t *testing.T) {
 	}
 }
 
-// 真的把 app 单独拷出来放了时，原来那句话照旧。
+// Windows 的"在压缩包里直接双击"：资源管理器只把那一个文件解到临时目录去跑，
+// 用户根本没解压过 —— 那句"放回解压出来的目录"对他毫无用处，得告诉他先解压。
+func TestRootHintKnowsAboutWindowsZipPreview(t *testing.T) {
+	exe := `C:\Users\q\AppData\Local\Temp\Temp1_ai-desk-0.3.4-windows-amd64.zip\GUI-Setup.exe`
+	msg := rootHint("windows", exe, pkgroot.ErrNotFound)
+	for _, want := range []string{"在压缩包里直接双击", "全部解压缩", "install.cmd", pkgroot.ErrNotFound.Error()} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("该说清是压缩包预览，缺 %q，得到：%s", want, msg)
+		}
+	}
+	if strings.Contains(msg, "请把 GUI-Setup 放回解压出来的目录") {
+		t.Fatalf("他没解压过，让他「放回去」没有用：%s", msg)
+	}
+}
+
+// 真的把 app 单独拷出来放了时，原来那句话照旧（但要按平台提对入口脚本）。
 func TestRootHintWhenJustMisplaced(t *testing.T) {
-	msg := rootHint("/tmp/somewhere/GUI-Setup.app/Contents/MacOS/GUI-Setup", pkgroot.ErrNotFound)
+	msg := rootHint("darwin", "/tmp/somewhere/GUI-Setup.app/Contents/MacOS/GUI-Setup", pkgroot.ErrNotFound)
 	if !strings.Contains(msg, "请把 GUI-Setup 放回解压出来的目录") {
 		t.Fatalf("Message = %q", msg)
 	}
 	if strings.Contains(msg, "App Translocation") {
 		t.Fatalf("没被挪走就别提 Translocation：%s", msg)
+	}
+}
+
+// 提到"和谁并排"的地方，入口脚本名要按平台写对。
+func TestRootHintNamesTheEntryScriptOfThatPlatform(t *testing.T) {
+	if msg := rootHint("windows", `C:\Users\q\Downloads\pkg\GUI-Setup.exe`, pkgroot.ErrNotFound); !strings.Contains(msg, "install.cmd") {
+		t.Fatalf("Windows 上该提 install.cmd：%s", msg)
+	}
+	if msg := rootHint("darwin", "/Users/q/Downloads/pkg/GUI-Setup.app/Contents/MacOS/GUI-Setup", pkgroot.ErrNotFound); !strings.Contains(msg, "install.sh") {
+		t.Fatalf("macOS 上该提 install.sh：%s", msg)
 	}
 }
 
@@ -236,7 +261,7 @@ func TestPickRootAdoptsTheChosenDirectory(t *testing.T) {
 func TestPickRootRejectsWrongDirectory(t *testing.T) {
 	a, _ := newTestApp(t, t.TempDir())
 	a.pickFolder = func(context.Context) (string, error) { return t.TempDir(), nil }
-	if st := a.PickRoot(); st.OK || !strings.Contains(st.Message, "没有 <简称>-manifest.yaml") {
+	if st := a.PickRoot(); st.OK || !strings.Contains(st.Message, "里没有 *-manifest.yaml") {
 		t.Fatalf("空目录该被拒，得到 %+v", st)
 	}
 

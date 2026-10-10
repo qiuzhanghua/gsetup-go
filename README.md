@@ -78,8 +78,16 @@ macOS 上有个专门的坑：**App Translocation**。带 `com.apple.quarantine`
 - 点**「自己选包目录…」**，挑回解压出来的那一层（`pkgroot.Manifests` 验过恰好一份才收）；
 - 或者先在终端里 `xattr -dr com.apple.quarantine <解压出来的目录>` 再双击。
 
-直接跑 `./install.sh` 那条命令行路径一直不受影响。给自己调试用的后门是环境变量
-`GSETUP_ROOT=<包根>`。
+Windows 上另有一个坑，而且更常见：**在压缩包预览里直接双击 `GUI-Setup.exe`**。资源管理器对
+压缩包只做单文件临时解压 —— 把这一个文件解到 `%TEMP%\Temp<N>_<包名>.zip\` 再启动，进程退出后
+连那份临时目录都一并清理，所以**用户根本看不到自己被解到哪儿去了**；它身边既没有清单也没有
+`install.cmd`，往上找同样是白找。v1.0.2 起认得出这种路径（`Temp<N>_….zip` 那一段），错误页会
+直接说：请右键那个 zip →「全部解压缩…」，在解出来的文件夹里再双击（那儿 `GUI-Setup.exe` 与
+`ad-manifest.yaml`、`install.cmd` 并排）。macOS 的 App Translocation 是**系统**干的，这一条是
+**资源管理器**干的 —— 现象一样，责任方完全不同。
+
+直接跑 `./install.sh`（Windows：`install.cmd`）那条命令行路径一直不受影响。给自己调试用的
+后门是环境变量 `GSETUP_ROOT=<包根>`。
 
 ## 它怎么进到用户的包里
 

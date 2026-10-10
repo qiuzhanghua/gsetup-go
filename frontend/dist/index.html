@@ -17,7 +17,7 @@
     <section id="error-box" class="hidden card error-card">
       <p id="error-message"></p>
       <div class="row">
-        <span class="grow muted small">找不到包的话，自己指一下也行：挑那个放着 <code>-manifest.yaml</code> 与 <code>install.sh</code> 的目录。</span>
+        <span class="grow muted small">找不到包的话，自己指一下也行：挑那个放着 <code>-manifest.yaml</code> 与入口脚本（<code>install.cmd</code> / <code>install.sh</code>）的目录。</span>
         <button id="pick-root" class="primary">自己选包目录…</button>
       </div>
     </section>
@@ -59,7 +59,7 @@
           <input id="add-to-path" type="checkbox" checked />
           让终端里也能直接用 <code id="cmd-name">ad</code> 命令
         </label>
-        <p class="muted small">勾上就是 <code>--yes</code>（会动 <code>~/.zshrc</code> 那几个文件）；不勾就是 <code>--no-path</code>。</p>
+        <p class="muted small">勾上就是 <code>--yes</code>（会改 shell 配置；Windows 是注册表里的 <code>Path</code>）；不勾就是 <code>--no-path</code>。</p>
       </div>
     </section>
 

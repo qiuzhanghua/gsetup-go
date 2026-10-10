@@ -129,6 +129,31 @@ func TestLooksTranslocated(t *testing.T) {
 	}
 }
 
+// Windows 资源管理器"在压缩包里直接双击"：它只把那一个文件解到 Temp<N>_<包名>.zip\ 下。
+//
+// 这条判断只看路径里那一段名字，所以任何平台上都能跑这条用例。
+func TestLooksZipPreview(t *testing.T) {
+	for _, p := range []string{
+		`C:\Users\q\AppData\Local\Temp\Temp1_ai-desk-0.3.4-windows-amd64.zip\GUI-Setup.exe`,
+		`C:\Users\q\AppData\Local\Temp\Temp12_pkg.zip\sub\GUI-Setup.exe`,
+		"/tmp/Temp3_pkg.zip/GUI-Setup",
+	} {
+		if !LooksZipPreview(p) {
+			t.Errorf("%s 该认成压缩包预览", p)
+		}
+	}
+	for _, p := range []string{
+		`C:\Users\q\Downloads\ai-desk-0.3.4-windows-amd64\GUI-Setup.exe`,
+		`C:\Users\q\AppData\Local\Temp\go-build123\b001\gsetup-go.test.exe`,
+		"/Users/q/Downloads/ai-desk.zip/GUI-Setup",
+		"/opt/AppTranslocationSucks/x",
+	} {
+		if LooksZipPreview(p) {
+			t.Errorf("%s 不该认成压缩包预览", p)
+		}
+	}
+}
+
 // 后缀一样但名字就是后缀本身的不算（免得把 -manifest.yaml 当简称）。
 func TestManifestsIgnoresBareSuffix(t *testing.T) {
 	root := t.TempDir()

@@ -62,6 +62,25 @@ ai-desk 那边就是下这里的现成资产（按 `GSETUP_REF` 钉 tag 取对�
 测试本身也按平台写：`#!/bin/sh` 那几条 pty 用例在 Windows 上跳过（那边跑的是
 `install.cmd` / `cmd.exe`），另有一条 Windows 专属用例真的起一个 `cmd.exe` 验退出码。
 
+## 找不着包的时候
+
+它从自己的可执行文件所在目录起，**往上最多 8 层**找一个"恰好一份"的
+`<简称>-manifest.yaml`（这一层有两份就报错：说不清该用哪一份）。某一层读不了（没权限、
+或者只读映像上 `readdir` 报 ERANGE）不算致命，记下来接着往上；一路没找着才说"没找到"，
+并捎上哪几层没读成 —— 用户该看到的是"没找到包"，不是一句 errno。
+
+macOS 上有个专门的坑：**App Translocation**。带 `com.apple.quarantine`（下载标记）的
+`.app` 被双击时，Gatekeeper 会把整个 bundle 复制进一个只读临时目录再运行，于是路径变成
+`…/T/AppTranslocation/<UUID>/d/GUI-Setup.app/Contents/MacOS/GUI-Setup` —— 在那儿**看不见**
+用户解压出来的 `install.sh` 与清单，往上找是白找。认得出这种情况时错误页会说清是系统干的，
+并给两条路：
+
+- 点**「自己选包目录…」**，挑回解压出来的那一层（`pkgroot.Manifests` 验过恰好一份才收）；
+- 或者先在终端里 `xattr -dr com.apple.quarantine <解压出来的目录>` 再双击。
+
+直接跑 `./install.sh` 那条命令行路径一直不受影响。给自己调试用的后门是环境变量
+`GSETUP_ROOT=<包根>`。
+
 ## 它怎么进到用户的包里
 
 它不落家、不进账本 —— 它是"安装过程"本身。gpm-go 的清单为此多了一段 `setup:`（与

@@ -12,7 +12,7 @@
   },
   "info": {
     "productName": "GUI-Setup",
-    "productVersion": "1.0.0",
+    "productVersion": "1.0.1",
     "comments": "给 gpm 打包出来的 GUI 应用配的图形安装向导"
   }
 }

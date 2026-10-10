@@ -192,6 +192,10 @@ GUI-Setup 是**随包跑的**（在解压出来的目录里双击），不是装
 
 找到包根之后：清单读 `<包根>/<简称>-manifest.yaml`，要跑的命令拼 `<包根>/install.sh`（Windows：`<包根>\install.cmd`）。
 找不到就直说："请把 GUI-Setup 放回解压出来的目录里再运行"——有人会把 `.app` 单独拷到桌面。
+v1.0.2 起还要分得清另外两种"用户什么都没做错"的情形：macOS 的 **App Translocation**
+（系统把带下载标记的整个 bundle 挪进只读临时目录），以及 Windows 的**压缩包预览**
+（资源管理器只把那一个文件解到 `%TEMP%\Temp<N>_<包名>.zip\` 去跑，跑完连临时目录都清掉，
+用户根本看不到自己被解到哪儿去了）。这两种都不能让他"放回去"，得给对应的出路。
 
 ## 5. 输出与红字（平台不一样，要如实处理）
 
@@ -225,7 +229,7 @@ GUI-Setup 是**随包跑的**（在解压出来的目录里双击），不是装
 | `gpm-go` | 生成的 `install.sh` / `install.cmd` 把参数原样转交（`"$@"` / `%*`，拼在烘进去的 `--dir` 之后） | ✅ v3.12 已完成 |
 | `gpm-go` | `gpm pack` 多一个 `--setup <路径>` 参数 + 清单解析 `setup:`（复用 `Entry`，按 GOOS 挑一项，bundle/exe 二选一），把顶层那份打进 zip 并保住可执行位；PACKAGE-FORMAT 里写清两个相对根 | ✅ v3.13 已完成（gpm v0.6.4） |
 | `gpm-go` | （可选）`gpm list` 输出里带上版本，方便 GUI 端判断"能不能升级" | ⬜ 待确认（账本自己读也行） |
-| `ai-desk` | CI 先构建 `gsetup-go`，把 `GUI-Setup` / `GUI-Setup.exe` 与 `install.sh` 并排放在装配目录**顶层**（不另起 `setup/`，见 §2.1）；`GPM_REF` 跟到带 v3.12 的 gpm | ✅ 已完成（`tools/package.sh` 新增 `-s`；`release.yml` 改成下 `gsetup-go` 的现成 release 资产，`GSETUP_REF: v1.0.0`、`GPM_REF: v0.6.4`；六平台 CI 全绿） |
+| `ai-desk` | CI 先构建 `gsetup-go`，把 `GUI-Setup` / `GUI-Setup.exe` 与 `install.sh` 并排放在装配目录**顶层**（不另起 `setup/`，见 §2.1）；`GPM_REF` 跟到带 v3.12 的 gpm | ✅ 已完成（`tools/package.sh` 新增 `-s`；`release.yml` 改成下 `gsetup-go` 的现成 release 资产，`GSETUP_REF: v1.0.2`、`GPM_REF: v0.6.4`；六平台 CI 全绿） |
 | `ai-desk` | 清单 `ad-manifest.yaml` 加 `setup:` 段（`darwin: { bundle: "GUI-Setup.app" }`、`windows: { exe: GUI-Setup.exe }`） | ✅ 已完成（由 `package.sh -s` 按平台生成，见 v0.6.4 包实测） |
 
 ## 8. 明确不做

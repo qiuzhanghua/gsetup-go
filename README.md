@@ -25,6 +25,33 @@ sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev    # Ubuntu 24.04 起
 wails build -clean -tags webkit2_41                           # 4.0 那一支在新镜像上已经没有了
 ```
 
+## 发版
+
+打 tag 就发（`.github/workflows/release.yml`），也可以在 Actions 页面手动指定 tag：
+
+```sh
+# 1. 先把版本号抬上去：wails.json 的 info.productVersion —— 徽标 / 关于里显示的就是它
+# 2. 提交，再打带注释的 tag 推上去
+git tag -a v1.1.0 -m "GUI-Setup v1.1.0：……"
+git push gh main v1.1.0
+```
+
+工作流开头会拿 tag 和 `wails.json` 的 `info.productVersion` 对一下，对不上直接报错，
+所以"忘了抬版本号"这件事只会失败，不会发出一个名不副实的包。
+
+Wails 是 CGO + 系统 webview，六个平台得各自原生编一份（gpm 那种一个 runner 编六份在
+这儿不成立），矩阵就是六条腿：`macos-14`、`macos-26-intel`、`ubuntu-latest`、
+`ubuntu-24.04-arm`、`windows-latest`、`windows-11-arm`。产物：
+
+| 资产 | 说明 |
+| --- | --- |
+| `GUI-Setup-<版本>-darwin-<arch>.zip` | `ditto` 打的，里面是 `GUI-Setup.app` |
+| `GUI-Setup-<版本>-windows-<arch>.exe` | |
+| `GUI-Setup-<版本>-linux-<arch>` | 裸可执行文件，带 x 位 |
+
+ai-desk 那边目前是**就地编**（checkout `.gsetup-go`，按 `GSETUP_REF` 钉 tag），还没用这些
+现成资产；将来想省那几分钟，可以改成下载这里的 zip / exe。
+
 ## 它怎么进到用户的包里
 
 它不落家、不进账本 —— 它是"安装过程"本身。gpm-go 的清单为此多了一段 `setup:`（与

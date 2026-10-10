@@ -289,6 +289,19 @@ GUI-Setup 是**随包跑的**（在解压出来的目录里双击），不是装
 ② ai-desk 六平台 CI 的产物里，`GUI-Setup.app` 就躺在 `install.sh` 旁边（macOS 主可执行文件 0755、
 **不在** `SHA256SUMS` 里），与清单的 `setup:` 段对得上；把那个 zip 解到干净家里跑 `./install.sh --yes`
 能装好，而 `find <家> -iname "*GUI-Setup*"` 一处也没有 —— 图形安装器是"安装过程"，不落家、不进账本。
+③ **在真机上被人手点完了两遍**（macOS 27.0.1 / arm64，2026-10-10，用的正是 AI Desk **v0.3.2 的正式 Release 资产**）：
+第一遍界面 A 选 cot、家 `~/cot`、勾了 PATH ⇒ 实跑 `./install.sh --dir ~/cot --with cot --yes`，
+`~/cot/AI Desk.app` + `bin/ad`（里设 `COT_HOME`）+ `bin/gpm` + `~/Applications` 软链 + 三份 rc 块 +
+新建的 `~/cot/cot-state.json`（`verified: true`）全套落位，而 `~/cot/bin/cot` 与 `lib/` 那 49 个目录一位没动；
+第二遍选 tdp（家自动变 `~/tdp`）⇒ 包里那份 `tools/darwin_arm64/tdp` 自举成 `tdp 27.0.6`，应用落
+`~/tdp/AI Desk.app`、账本新建 `~/tdp/tdp-state.json`（`bin/ad` 里设的是 `TDP_HOME`），而 **`~/cot` 全程一位没动**
+—— 清单的 `requires: [cot, tdp]` 确实被 `--with` 收窄成了一家；新开一个交互 zsh，
+`command -v ad tdp gpm` 三条全落在 `~/tdp/bin`，PATH 块当场生效（这就是界面 A 那个勾选框的效果）。
+④ 两遍之后都在终端 `gpm uninstall ai-desk --yes` 回放干净：入口 / 启动器 / 软链 / 三份 rc 块 / `bin/gpm`
+全清，账本只剩 `packages: []`，`~/cot` 与 `~/tdp/bin/tdp` 一个字节没动，三个 rc 文件的**末字节逐字节还原**
+（原本末行没有尾换行，回放后也没有）—— 卸载不带走工具链（这正是 §6 的边界：要清那个家得自己 `rm -rf`）。
+⑤ 顺带验到"写不动"时的行为：同一条卸载命令若所有外部写都被拒（受限环境里实测），它**一位都没删**、
+连 `cot-state.json.tmp` 都没留下 —— 账本最后落盘，要么全做要么全不做。
 
 ## 11. 技术选型
 

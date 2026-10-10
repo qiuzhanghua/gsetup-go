@@ -18,6 +18,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("close-button").addEventListener("click", () => {
     if (window.go && window.go.main) window.go.main.App.Quit();
   });
+  $("pick-root").addEventListener("click", pickRoot);
   $("start-button").addEventListener("click", start);
   $("remove-confirm").addEventListener("click", confirmRemoval);
   $("remove-cancel").addEventListener("click", cancelRemoval);
@@ -64,6 +65,26 @@ function showFatal(message) {
   $("removal-box").classList.add("hidden");
   $("title").textContent = "这个包打不开";
   $("status").textContent = "";
+}
+
+// 被 macOS 挪进只读临时目录（App Translocation）的时候，GUI-Setup 从自己的位置
+// 是看不见 install.sh 的：让用户自己指一下包目录，Go 那边验过再重发整份底稿。
+async function pickRoot() {
+  let fresh;
+  try {
+    fresh = await window.go.main.App.PickRoot();
+  } catch (err) {
+    showFatal(String(err));
+    return;
+  }
+  if (!fresh || !fresh.ok) {
+    showFatal((fresh && fresh.message) || "这个目录不行，再挑一个");
+    return;
+  }
+  state = fresh;
+  $("error-box").classList.add("hidden");
+  renderShell();
+  refresh();
 }
 
 function renderShell() {

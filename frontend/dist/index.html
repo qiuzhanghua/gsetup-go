@@ -16,7 +16,10 @@
 
     <section id="error-box" class="hidden card error-card">
       <p id="error-message"></p>
-      <p class="muted">把 GUI-Setup 放回解压出来的那个目录，和 install.sh 摆在一起，再双击它。</p>
+      <div class="row">
+        <span class="grow muted small">找不到包的话，自己指一下也行：挑那个放着 <code>-manifest.yaml</code> 与 <code>install.sh</code> 的目录。</span>
+        <button id="pick-root" class="primary">自己选包目录…</button>
+      </div>
     </section>
 
     <section id="installed-box" class="hidden card">

@@ -38,6 +38,9 @@ type App struct {
 	homeOverride string
 	emitHook     func(name string, payload any)
 	envOverride  []string
+
+	// pickFolder 也是给测试用的：真机上是 runtime 的目录选择框。
+	pickFolder func(context.Context) (string, error)
 }
 
 // NewApp 建一个。
@@ -65,7 +68,8 @@ func (a *App) ensure() error {
 	}
 	root, name, err := pkgroot.FindFromExecutable()
 	if err != nil {
-		a.loadErr = err.Error() + "。请把 GUI-Setup 放回解压出来的目录里再运行。"
+		exe, _ := os.Executable()
+		a.loadErr = rootHint(exe, err)
 		return fmt.Errorf("%s", a.loadErr)
 	}
 	man, err := manifest.Parse(filepath.Join(root, name))
@@ -75,6 +79,89 @@ func (a *App) ensure() error {
 	}
 	a.root, a.man = root, man
 	return nil
+}
+
+// rootHint 把"找不着包根"翻成一句能照着做的话。
+//
+// 最要紧的是分得清两种情形：macOS 把 app 挪进只读临时目录了（用户什么都没做错，
+// 让他"放回去"没有用），还是他真的把 GUI-Setup 单独拷到别处去了。
+func rootHint(exe string, err error) string {
+	if pkgroot.LooksTranslocated(exe) {
+		return "macOS 把 GUI-Setup 挪到一个只读的临时目录里跑起来了（App Translocation —— 带" +
+			"「下载」标记的 app 双击时系统就这么干），在那儿看不见解压出来的 install.sh 与清单。" +
+			"点下面的「自己选包目录」，挑你解压出来的那个目录就行；或者在终端里" +
+			"`xattr -dr com.apple.quarantine <解压出来的目录>` 之后再双击它。" +
+			"（也可以直接跑 ./install.sh，命令行这条路不受影响。）\n原始错误：" + err.Error()
+	}
+	return err.Error() + "。请把 GUI-Setup 放回解压出来的目录里再运行，" +
+		"或者点下面的「自己选包目录」自己挑一下。"
+}
+
+// useRoot 把用户挑的目录当包根验一遍再收下（PickRoot 用）。
+func (a *App) useRoot(dir string) error {
+	names, err := pkgroot.Manifests(dir)
+	if err != nil {
+		return fmt.Errorf("%s 读不了：%w", dir, err)
+	}
+	switch len(names) {
+	case 0:
+		return fmt.Errorf("%s 里没有 <简称>-manifest.yaml —— 要选解压出来、和 install.sh 并排的那一层", dir)
+	case 1:
+	default:
+		return fmt.Errorf("%s 里有 %d 份清单（%s），说不清该用哪一份", dir, len(names), strings.Join(names, "、"))
+	}
+	man, err := manifest.Parse(filepath.Join(dir, names[0]))
+	if err != nil {
+		return err
+	}
+	a.root, a.man, a.loadErr = dir, man, ""
+	return nil
+}
+
+// PickRoot 让用户自己指一下包根：被 App Translocation 挪走之后，从自己的位置
+// 往上找是找不着包的。挑中的目录验一遍，通过了就把整份底稿重新发给前端。
+func (a *App) PickRoot() State {
+	if a.pickFolder == nil {
+		a.pickFolder = a.openDirectoryDialog
+	}
+	dir, err := a.pickFolder(a.ctx)
+	if err != nil {
+		return State{OK: false, Message: "选目录没成： " + err.Error(), Goos: a.goos, UserHome: a.userHome}
+	}
+	if strings.TrimSpace(dir) == "" {
+		// 用户取消了：原来那句错话照旧报回去，界面不用动。
+		return a.Bootstrap()
+	}
+	if err := a.useRoot(dir); err != nil {
+		return State{OK: false, Message: err.Error(), Goos: a.goos, UserHome: a.userHome}
+	}
+	return a.Bootstrap()
+}
+
+// openDirectoryDialog 是正式实现；测试里换成 pickFolder 那个钩子。
+func (a *App) openDirectoryDialog(ctx context.Context) (string, error) {
+	return wailsruntime.OpenDirectoryDialog(ctx, wailsruntime.OpenDialogOptions{
+		Title:                "选解压出来的那个目录（里面应该有 <简称>-manifest.yaml 与 install.sh）",
+		DefaultDirectory:     a.defaultPickDir(),
+		CanCreateDirectories: false,
+	})
+}
+
+// defaultPickDir 让对话框从最可能的地方开：下载目录。
+func (a *App) defaultPickDir() string {
+	if a.userHome == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			a.userHome = home
+		}
+	}
+	if a.userHome == "" {
+		return ""
+	}
+	downloads := filepath.Join(a.userHome, "Downloads")
+	if info, err := os.Stat(downloads); err == nil && info.IsDir() {
+		return downloads
+	}
+	return a.userHome
 }
 
 // Installation 是界面 A 里的一行：某个家里装没装、装了哪个版本。

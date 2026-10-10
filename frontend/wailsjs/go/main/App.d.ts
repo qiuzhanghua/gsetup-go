@@ -7,6 +7,8 @@ export function Bootstrap():Promise<main.State>;
 
 export function OpenFolder(arg1:string):Promise<string>;
 
+export function PickRoot():Promise<main.State>;
+
 export function Plan(arg1:string,arg2:string,arg3:boolean):Promise<main.Plan>;
 
 export function PlanUninstall(arg1:string):Promise<main.UninstallPlan>;

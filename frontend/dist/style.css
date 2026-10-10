@@ -55,6 +55,9 @@ header p { margin: 0 0 14px; }
 
 .error-card { border-color: #f3c2bd; background: #fdf3f2; }
 .error-card p { margin: 0 0 6px; }
+/* Go 那边给的话里带换行（"原始错误：" 另起一行），别让 HTML 把它们吞了 */
+#error-message { white-space: pre-line; }
+.error-card .row { margin-top: 10px; }
 
 .field { margin-bottom: 14px; }
 .field:last-child { margin-bottom: 0; }

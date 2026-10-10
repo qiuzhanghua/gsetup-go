@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -175,6 +177,94 @@ func TestBootstrapWithoutPackage(t *testing.T) {
 	}
 	if !strings.Contains(st.Message, "请把 GUI-Setup 放回解压出来的目录") {
 		t.Fatalf("Message = %q", st.Message)
+	}
+}
+
+// macOS 把下载来的 app 挪进只读临时目录（App Translocation）时，往上找是白找：
+// 那句话得说清"这不是你放错了"，并且给两条能走的路。
+func TestRootHintKnowsAboutTranslocation(t *testing.T) {
+	exe := "/private/var/folders/cc/xx/T/AppTranslocation/2ED1/d/GUI-Setup.app/Contents/MacOS/GUI-Setup"
+	msg := rootHint(exe, pkgroot.ErrNotFound)
+	for _, want := range []string{"App Translocation", "xattr -dr com.apple.quarantine", "自己选包目录", pkgroot.ErrNotFound.Error()} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("被挪走时那句话里该有 %q，得到：%s", want, msg)
+		}
+	}
+	if strings.Contains(msg, "请把 GUI-Setup 放回解压出来的目录") {
+		t.Fatalf("挪走不是用户放错了，不该让他「放回去」：%s", msg)
+	}
+}
+
+// 真的把 app 单独拷出来放了时，原来那句话照旧。
+func TestRootHintWhenJustMisplaced(t *testing.T) {
+	msg := rootHint("/tmp/somewhere/GUI-Setup.app/Contents/MacOS/GUI-Setup", pkgroot.ErrNotFound)
+	if !strings.Contains(msg, "请把 GUI-Setup 放回解压出来的目录") {
+		t.Fatalf("Message = %q", msg)
+	}
+	if strings.Contains(msg, "App Translocation") {
+		t.Fatalf("没被挪走就别提 Translocation：%s", msg)
+	}
+}
+
+// 自己选包目录：挑对了就把整份底稿重发一遍，别的入口也跟着能用。
+func TestPickRootAdoptsTheChosenDirectory(t *testing.T) {
+	pkg := fakePackage(t, "#!/bin/sh\nexit 0\n")
+	a, home := newTestApp(t, t.TempDir()) // 一开始待的目录里没有包
+	if st := a.Bootstrap(); st.OK {
+		t.Fatal("空目录里不该认得出包")
+	}
+	a.pickFolder = func(context.Context) (string, error) { return pkg, nil }
+	st := a.PickRoot()
+	if !st.OK {
+		t.Fatalf("挑对了该能用，得到 %s", st.Message)
+	}
+	if st.Root != pkg {
+		t.Fatalf("Root = %s，想要 %s", st.Root, pkg)
+	}
+	if st.Short != "ad" || st.Name != "AI Desk" {
+		t.Fatalf("清单该读出来了：%+v", st)
+	}
+	if st.DefaultHome != filepath.Join(home, "cot") {
+		t.Fatalf("DefaultHome = %s", st.DefaultHome)
+	}
+	if p := a.Plan("cot", "", false); !p.OK {
+		t.Fatalf("收下之后 Plan 该能规划了，得到 %s", p.Message)
+	}
+}
+
+// 挑错了（没清单 / 两份清单）要说清楚，别默默换一个。
+func TestPickRootRejectsWrongDirectory(t *testing.T) {
+	a, _ := newTestApp(t, t.TempDir())
+	a.pickFolder = func(context.Context) (string, error) { return t.TempDir(), nil }
+	if st := a.PickRoot(); st.OK || !strings.Contains(st.Message, "没有 <简称>-manifest.yaml") {
+		t.Fatalf("空目录该被拒，得到 %+v", st)
+	}
+
+	two := t.TempDir()
+	write(t, filepath.Join(two, "ad-manifest.yaml"), manifestYAML, 0o644)
+	write(t, filepath.Join(two, "ac-manifest.yaml"), manifestYAML, 0o644)
+	a.pickFolder = func(context.Context) (string, error) { return two, nil }
+	if st := a.PickRoot(); st.OK || !strings.Contains(st.Message, "2 份清单") {
+		t.Fatalf("两份清单该被拒，得到 %+v", st)
+	}
+}
+
+// 用户点了取消：原来那句"找不着包"照旧报回去，界面不用动。
+func TestPickRootCancelKeepsTheComplaint(t *testing.T) {
+	a, _ := newTestApp(t, t.TempDir())
+	a.pickFolder = func(context.Context) (string, error) { return "", nil }
+	st := a.PickRoot()
+	if st.OK || !strings.Contains(st.Message, "请把 GUI-Setup 放回解压出来的目录") {
+		t.Fatalf("取消后该还是原来那句话，得到 %+v", st)
+	}
+}
+
+// 对话框本身打不开（没有图形会话之类）也不能崩，得报出来。
+func TestPickRootSurfacesDialogError(t *testing.T) {
+	a, _ := newTestApp(t, t.TempDir())
+	a.pickFolder = func(context.Context) (string, error) { return "", errors.New("没有图形会话") }
+	if st := a.PickRoot(); st.OK || !strings.Contains(st.Message, "没有图形会话") {
+		t.Fatalf("对话框出错该报出来，得到 %+v", st)
 	}
 }
 

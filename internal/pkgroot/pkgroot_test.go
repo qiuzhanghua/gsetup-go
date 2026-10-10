@@ -131,7 +131,9 @@ func TestLooksTranslocated(t *testing.T) {
 
 // Windows 资源管理器"在压缩包里直接双击"：它只把那一个文件解到 Temp<N>_<包名>.zip\ 下。
 //
-// 这条判断只看路径里那一段名字，所以任何平台上都能跑这条用例。
+// 这条判断只看路径里那一段名字，所以任何平台上都能跑这条用例 —— 别为了"干净"把它改成
+// filepath.ToSlash / filepath.Clean 那一套：那套只认**当前平台**的分隔符，在 macOS/Linux
+// 上会把整条 Windows 路径当成一个片段，于是 Windows 形状的正例全都认不出来（CI 上红过）。
 func TestLooksZipPreview(t *testing.T) {
 	for _, p := range []string{
 		`C:\Users\q\AppData\Local\Temp\Temp1_ai-desk-0.3.4-windows-amd64.zip\GUI-Setup.exe`,

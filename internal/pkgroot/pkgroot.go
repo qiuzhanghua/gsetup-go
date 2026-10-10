@@ -61,13 +61,19 @@ var tempZipMark = regexp.MustCompile(`(?i)^Temp\d+_.+\.zip$`)
 // （App Translocation），这边是 Windows **资源管理器**解压单个文件的行为 —— 系统
 // 没碰过用户的包。
 //
-// 只看路径里有没有 Temp<N>_….zip 这一段，不要求它落在 os.TempDir() 之下：有人会把
-// TEMP 指到别处，而这段名字本身已经够特征（正常解压不会解出这种目录名）。
+// 两种分隔符都切，**不用** filepath 那一套：这里可能拿到 Windows 形状的路径
+// （`…\Temp1_x.zip\GUI-Setup.exe`），而本函数在别的平台上也会被调用（测试、
+// 诊断）—— filepath 只认当前平台的分隔符，在 macOS/Linux 上会把整条 Windows
+// 路径当成一个片段，于是"认不出"（CI 上就是这样红过一次）。清理（Clean）同理不需要：
+// 这里只找有没有那一段名字。
 //
-// 故意**不**做"只要在临时目录下就算"那种更宽的判断：Go 自己编译测试时把二进制放在
+// 只看名字，不要求它落在 os.TempDir() 之下：有人会把 TEMP 指到别处，而这段名字
+// 本身已经够特征（正常解压不会解出这种目录名）。
+//
+// 故意**不**做"只要在临时目录下就算"那种更宽的判断：Go 编译测试时把二进制放在
 // `%TEMP%\go-build<N>\…`，那会让本仓库自己的用例在 Windows 上误判成"压缩包预览"。
 func LooksZipPreview(path string) bool {
-	for _, part := range strings.Split(filepath.ToSlash(filepath.Clean(path)), "/") {
+	for _, part := range strings.FieldsFunc(path, func(r rune) bool { return r == '/' || r == '\\' }) {
 		if tempZipMark.MatchString(part) {
 			return true
 		}

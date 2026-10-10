@@ -223,10 +223,10 @@ GUI-Setup 是**随包跑的**（在解压出来的目录里双击），不是装
 | 仓 | 改动 | 状态 |
 |---|---|---|
 | `gpm-go` | 生成的 `install.sh` / `install.cmd` 把参数原样转交（`"$@"` / `%*`，拼在烘进去的 `--dir` 之后） | ✅ v3.12 已完成 |
-| `gpm-go` | `gpm pack` 多一个 `--setup <路径>` 参数 + 清单解析 `setup:`（复用 `Entry`，按 GOOS 挑一项，bundle/exe 二选一），把顶层那份打进 zip 并保住可执行位；PACKAGE-FORMAT 里写清两个相对根 | ⬜ 待做 |
+| `gpm-go` | `gpm pack` 多一个 `--setup <路径>` 参数 + 清单解析 `setup:`（复用 `Entry`，按 GOOS 挑一项，bundle/exe 二选一），把顶层那份打进 zip 并保住可执行位；PACKAGE-FORMAT 里写清两个相对根 | ✅ v3.13 已完成（gpm v0.6.4） |
 | `gpm-go` | （可选）`gpm list` 输出里带上版本，方便 GUI 端判断"能不能升级" | ⬜ 待确认（账本自己读也行） |
-| `ai-desk` | CI 先构建 `gsetup-go`，把 `GUI-Setup` / `GUI-Setup.exe` 与 `install.sh` 并排放在装配目录**顶层**（不另起 `setup/`，见 §2.1）；`GPM_REF` 跟到带 v3.12 的 gpm | ⬜ 待做 |
-| `ai-desk` | 清单 `ad-manifest.yaml` 加 `setup:` 段（`darwin: { bundle: "GUI-Setup.app" }`、`windows: { exe: GUI-Setup.exe }`） | ⬜ 待做 |
+| `ai-desk` | CI 先构建 `gsetup-go`，把 `GUI-Setup` / `GUI-Setup.exe` 与 `install.sh` 并排放在装配目录**顶层**（不另起 `setup/`，见 §2.1）；`GPM_REF` 跟到带 v3.12 的 gpm | ✅ 已完成（`tools/package.sh` 新增 `-s`；`release.yml` 检出 gsetup-go 就地编，`GSETUP_REF: v0.1.0`、`GPM_REF: v0.6.4`；六平台 CI 全绿） |
+| `ai-desk` | 清单 `ad-manifest.yaml` 加 `setup:` 段（`darwin: { bundle: "GUI-Setup.app" }`、`windows: { exe: GUI-Setup.exe }`） | ✅ 已完成（由 `package.sh -s` 按平台生成，见 v0.6.4 包实测） |
 
 ## 8. 明确不做
 
@@ -281,6 +281,14 @@ GUI-Setup 是**随包跑的**（在解压出来的目录里双击），不是装
   工具链的 `bin/` 一个字节没动。
 - **A7 幂等**：连点两次"升级" → 第二次打印"已经装好 …，跳过"（或"已经是最新的"），rc 文件不被写第二遍。
 - **A8 只读展示的命令与实际执行的一致**：窗口里显示的命令，复制到终端里跑，结果一样。
+
+**已经真机验证过的（macOS，2026-10-10）**：① 拿 gpm v0.6.4 打的**真的** ai-desk 0.3.1 包跑端到端
+（`GSETUP_E2E_PKG=… go test -count=1 -run TestEndToEndRealPackage -v .`）：界面上那条只读命令与
+真跑的命令一致，装完 `<家>/cot/AI Desk.app` + `bin/ad` + 账本一条（`entryKind: bundle`、`cmd: ad`），
+家里没有 `ai-desk_*`、`lib/` 空；再开一次能认出已装，卸载把入口 / 启动器 / 账本清干净。
+② ai-desk 六平台 CI 的产物里，`GUI-Setup.app` 就躺在 `install.sh` 旁边（macOS 主可执行文件 0755、
+**不在** `SHA256SUMS` 里），与清单的 `setup:` 段对得上；把那个 zip 解到干净家里跑 `./install.sh --yes`
+能装好，而 `find <家> -iname "*GUI-Setup*"` 一处也没有 —— 图形安装器是"安装过程"，不落家、不进账本。
 
 ## 11. 技术选型
 

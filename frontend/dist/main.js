@@ -72,14 +72,7 @@ function renderShell() {
     `包根：${state.root}　·　简称：${state.short}　·　平台：${state.goos}`;
   $("cmd-name").textContent = state.cmd;
 
-  // A 区：两个家都报一句
-  const list = $("installed-list");
-  list.innerHTML = "";
-  const anyInstalled = state.installs.some((i) => i.installed);
-  $("installed-box").classList.toggle("hidden", !anyInstalled);
-  for (const inst of state.installs) {
-    list.appendChild(installRow(inst));
-  }
+  renderInstalls();
 
   // B 区：工具链单选
   const box = $("toolchains");
@@ -103,6 +96,43 @@ function renderShell() {
   $("home").value = state.defaultHome;
 
   $("choose-box").classList.remove("hidden");
+}
+
+// A 区：两个家都报一句。装完 / 卸完之后要重新画一遍，见 reloadInstalls。
+function renderInstalls() {
+  const list = $("installed-list");
+  list.innerHTML = "";
+  const anyInstalled = state.installs.some((i) => i.installed);
+  $("installed-box").classList.toggle("hidden", !anyInstalled);
+  for (const inst of state.installs) {
+    list.appendChild(installRow(inst));
+  }
+}
+
+// 装完或卸完之后重新问 Go 那边一次，A 区才会从"装着 0.3.2 / 重新安装 / 卸载"
+// 变回"里没装过 / 装到这里"。Bootstrap 可以反复调，它每次都重读两个账本。
+async function reloadInstalls() {
+  let fresh;
+  try {
+    fresh = await window.go.main.App.Bootstrap();
+  } catch (err) {
+    setRowsBusy(false);
+    return;
+  }
+  if (!fresh || !fresh.ok) {
+    setRowsBusy(false);
+    return;
+  }
+  state.installs = fresh.installs;
+  renderInstalls();
+}
+
+// 正在跑的时候 A 区的按钮一起变灰；跑完由 renderInstalls 重新造出新按钮。
+// data-locked 记着"这个按钮天生不可用"（家里没有 bin/gpm 时卸载就是这种）。
+function setRowsBusy(busy) {
+  document.querySelectorAll("#installed-list button").forEach((b) => {
+    b.disabled = busy || b.dataset.locked === "1";
+  });
 }
 
 function installRow(inst) {
@@ -135,6 +165,7 @@ function installRow(inst) {
     rm.className = "tiny";
     rm.textContent = "卸载";
     rm.disabled = !inst.uninstallable;
+    if (!inst.uninstallable) rm.dataset.locked = "1";
     rm.title = inst.uninstallable ? "" : "这个家里没有 bin/gpm，得在终端里自己卸";
     rm.addEventListener("click", () => uninstall(inst));
     row.appendChild(rm);
@@ -183,6 +214,9 @@ async function refresh() {
     warn.classList.add("hidden");
   }
   $("start-button").disabled = !plan.ok;
+  // 选中的这个家里已经装过了（Go 那边查的账本）：那就不给"开始安装"这个按钮，
+  // 要重装 / 升级 / 卸载都到上面 A 区那几颗按钮去。
+  $("start-button").classList.toggle("hidden", plan.ok && plan.installed);
   setStatus(plan.ok ? `将装到 ${plan.homeDisplay}` : "还不能开始");
 }
 
@@ -199,6 +233,7 @@ async function start() {
   $("output-box").classList.remove("hidden");
   outputEl.innerHTML = "";
   $("start-button").disabled = true;
+  setRowsBusy(true);
   setStatus("正在跑…");
   try {
     await window.go.main.App.Start(c.toolchain, c.home, c.addToPath);
@@ -283,6 +318,7 @@ async function confirmRemoval() {
   $("removal-box").classList.add("hidden");
   $("remove-confirm").disabled = true;
   running = true;
+  setRowsBusy(true);
   $("output-box").classList.remove("hidden");
   outputEl.innerHTML = "";
   appendLine({ stream: "system", text: "$ " + $("removal-command").textContent });
@@ -306,12 +342,13 @@ function onOutput(ev) {
 
 function onDone(payload) {
   running = false;
+  const message = (payload && payload.message) || "结束";
   appendLine({
     stream: payload && payload.result && payload.result.success ? "ok" : "bad",
-    text: "—— " + ((payload && payload.message) || "结束") + " ——",
+    text: "—— " + message + " ——",
   });
-  setStatus((payload && payload.message) || "");
-  refresh();
+  // 装完或卸完之后，A 区那份底稿已经过期了：重新问一次再画。
+  Promise.all([refresh(), reloadInstalls()]).then(() => setStatus(message));
 }
 
 function appendLine(ev) {

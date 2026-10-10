@@ -181,6 +181,7 @@ type Plan struct {
 	Home        string   `json:"home"`
 	HomeDisplay string   `json:"homeDisplay"`
 	AddToPath   bool     `json:"addToPath"`
+	Installed   bool     `json:"installed"`
 	Program     string   `json:"program"`
 	Args        []string `json:"args"`
 	Display     string   `json:"display"`
@@ -226,12 +227,17 @@ func (a *App) Plan(toolchain, home string, addToPath bool) Plan {
 	if !contains(a.man.Requires, toolchain) {
 		p.Warning = "清单的 requires 里没有 " + toolchain + "，--with " + toolchain + " 可能会被 gpm 拒绝。"
 	}
-	if inst := a.inspect(toolchain); inst.Installed {
-		msg := fmt.Sprintf("这个家里已经装过 %s %s，再装一次就是覆盖式升级。", a.man.Name, inst.Version)
-		if p.Warning != "" {
-			p.Warning += " "
+	// 看的是用户选的那个家（不是 toolchain 的默认家）：前端据此把"开始安装"收起来，
+	// 已经装过的家该走 A 区的升级 / 重新安装 / 卸载。
+	if led, err := ledger.Load(home); err == nil {
+		if pkg := led.Find(a.man.ID); pkg != nil {
+			p.Installed = true
+			msg := fmt.Sprintf("这个家里已经装过 %s %s，再装一次就是覆盖式升级。", a.man.Name, pkg.Version)
+			if p.Warning != "" {
+				p.Warning += " "
+			}
+			p.Warning += msg
 		}
-		p.Warning += msg
 	}
 	return p
 }

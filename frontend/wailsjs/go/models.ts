@@ -35,6 +35,7 @@ export namespace main {
 	    home: string;
 	    homeDisplay: string;
 	    addToPath: boolean;
+	    installed: boolean;
 	    program: string;
 	    args: string[];
 	    display: string;
@@ -54,6 +55,7 @@ export namespace main {
 	        this.home = source["home"];
 	        this.homeDisplay = source["homeDisplay"];
 	        this.addToPath = source["addToPath"];
+	        this.installed = source["installed"];
 	        this.program = source["program"];
 	        this.args = source["args"];
 	        this.display = source["display"];

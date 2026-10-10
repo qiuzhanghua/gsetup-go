@@ -253,6 +253,33 @@ func TestPlanWarnsWhenAlreadyInstalled(t *testing.T) {
 	}
 }
 
+// 选中的那个家算数：Plan.Installed 跟着用户填的 home 走，不跟 toolchain 的默认家走。
+// （前端靠这个把已经装过的家的"开始安装"收起来。）
+func TestPlanInstalledFollowsTheChosenHome(t *testing.T) {
+	pkg := fakePackage(t, "#!/bin/sh\nexit 0\n")
+	a, home := newTestApp(t, pkg)
+	write(t, filepath.Join(home, "cot", "cot-state.json"),
+		`{"schemaVersion":1,"packages":[{"id":"ai-desk","version":"0.3.1"}]}`, 0o644)
+
+	if p := a.Plan("cot", "", false); !p.Installed {
+		t.Fatalf("默认家 ~/cot 里装过，该报 installed：%+v", p)
+	}
+	if p := a.Plan("tdp", "", false); p.Installed {
+		t.Fatalf("~/tdp 里没装过，不该报 installed：%+v", p)
+	}
+	if p := a.Plan("cot", "~/cot-two", false); p.Installed {
+		t.Fatalf("~/cot-two 里没装过，不该报 installed：%+v", p)
+	}
+	// 选了 tdp 却把家指回装过的 ~/cot：按家算，照样报 installed。
+	if p := a.Plan("tdp", "~/cot", false); !p.Installed {
+		t.Fatalf("家是 ~/cot、那里装过，就该报 installed：%+v", p)
+	}
+	// 没装过的家不该多出一句"覆盖式升级"。
+	if p := a.Plan("tdp", "", false); strings.Contains(p.Warning, "覆盖式升级") {
+		t.Fatalf("空家不该提覆盖，得到 %q", p.Warning)
+	}
+}
+
 func TestPlanNeedsScriptInPackage(t *testing.T) {
 	pkg := fakePackage(t, "") // 不放 install.sh
 	a, _ := newTestApp(t, pkg)
@@ -348,6 +375,44 @@ func TestUninstallWithoutGpm(t *testing.T) {
 	res := a.Uninstall(cot)
 	if res.Err == "" || !strings.Contains(res.Err, "家里没有") {
 		t.Fatalf("没有 gpm 该说清楚，得到 %+v", res)
+	}
+}
+
+// 前端装完 / 卸完要重新问一次 A 区，靠的就是 Bootstrap 可以反复调：
+// 在同一个 App 上第二次调用必须反映账本和 bin/gpm 的最新样子。
+func TestBootstrapIsRepeatableAfterUninstall(t *testing.T) {
+	pkg := fakePackage(t, "#!/bin/sh\nexit 0\n")
+	a, home := newTestApp(t, pkg)
+	cot := filepath.Join(home, "cot")
+	write(t, filepath.Join(cot, "bin", "gpm"), "#!/bin/sh\nexit 0\n", 0o755)
+	write(t, filepath.Join(cot, "cot-state.json"),
+		`{"schemaVersion":1,"packages":[{"id":"ai-desk","version":"0.3.1"}]}`, 0o644)
+
+	cotInstall := func(st State) Installation {
+		t.Helper()
+		for _, i := range st.Installs {
+			if i.Toolchain == "cot" {
+				return i
+			}
+		}
+		t.Fatalf("Bootstrap 里该有 cot 那一条：%+v", st.Installs)
+		return Installation{}
+	}
+
+	before := cotInstall(a.Bootstrap())
+	if !before.Installed || before.Version != "0.3.1" || !before.Uninstallable {
+		t.Fatalf("装着的家该报 installed / 0.3.1 / uninstallable：%+v", before)
+	}
+
+	// 卸载之后的样子：账本里没有这条了，bin/gpm 也没了。
+	write(t, filepath.Join(cot, "cot-state.json"), `{"schemaVersion":1,"packages":[]}`, 0o644)
+	if err := os.Remove(filepath.Join(cot, "bin", "gpm")); err != nil {
+		t.Fatal(err)
+	}
+
+	after := cotInstall(a.Bootstrap())
+	if after.Installed || after.Version != "" || after.Uninstallable {
+		t.Fatalf("卸完之后该报没装、也没有可卸载的入口：%+v", after)
 	}
 }
 

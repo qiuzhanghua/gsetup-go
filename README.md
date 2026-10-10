@@ -25,6 +25,33 @@ sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev    # Ubuntu 24.04 起
 wails build -clean -tags webkit2_41                           # 4.0 那一支在新镜像上已经没有了
 ```
 
+## 开发与测试
+
+```sh
+go vet ./...
+go test ./...                      # 五个内部包 + main 包
+```
+
+代码结构：
+
+| 位置 | 干什么 |
+| --- | --- |
+| `main.go` / `app.go` | Wails 的启动与绑定：把界面上选的东西（哪家工具链、装到哪个家、要不要写 PATH）拼成一条 `install.sh` / `install.cmd` 命令行 |
+| `internal/pkgroot/` | 从自己的可执行文件往上最多 8 层找"恰好一份" `<简称>-manifest.yaml`；认得出 App Translocation 与 Windows 压缩包预览那两种路径 |
+| `internal/wizard/` | 三平台的路径与命令拼接（`Sep` / `Join` / `Script` 都按**目标** goos 算，不按宿主） |
+| `internal/runner/` | 用 portable-pty 跑那条命令、把输出实时送回窗口（Unix 上 stderr 单独一根管道） |
+| `internal/manifest/` `internal/ledger/` | 读清单、读账本（"这个家里装过什么"就靠它） |
+| `frontend/dist/` | **手写的**界面（`index.html` / `main.js` / `style.css`），不是构建产物 |
+| `frontend/wailsjs/` | Wails 生成的绑定，提交进仓库；给 Go 侧加了新方法就顺手补这里 |
+| `reveal_*.go` | 三平台"在文件管理器里显示这个文件" |
+
+`e2e_test.go` 是**真机端到端**：拿一个真的解压出来的包（含真的 gpm、真的 `install.sh`、真的
+`payload`）装一遍、再卸一遍。默认跳过（要 pty、要几十秒、会真的往临时家里写东西）：
+
+```sh
+GSETUP_E2E_PKG=/tmp/fwd/pk go test -count=1 -run TestEndToEndRealPackage -v .
+```
+
 ## 发版
 
 打 tag 就发（`.github/workflows/release.yml`），也可以在 Actions 页面手动指定 tag：
@@ -96,3 +123,15 @@ Windows 上另有一个坑，而且更常见：**在压缩包预览里直接双�
 **顶层**、与 `install.sh` 并排（gpm v0.6.4 = 设计文档 v3.13 的 D43、FR-32）。
 ai-desk 的 `tools/package.sh -s` 就是喂给它的那个参数；契约细节见 gpm-go 的
 [`docs/PACKAGE-FORMAT.md`](https://github.com/qiuzhanghua/gpm-go/blob/main/docs/PACKAGE-FORMAT.md)。
+
+## 文档
+
+| 文件 | 是什么 |
+| --- | --- |
+| [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md) | 需求与验收：定位与边界、分发形态（`setup:` 段）、三块界面的流程、"怎么执行"（调谁、烘进去的默认值、pty 是硬要求） |
+| [gpm-go 的 `docs/PACKAGE-FORMAT.md`](https://github.com/qiuzhanghua/gpm-go/blob/main/docs/PACKAGE-FORMAT.md) | 分发包与 `setup:` 的**契约**（上文那些 v3.13 / D43 / FR-32 都出自这里） |
+| [gpm-go 的 README](https://github.com/qiuzhanghua/gpm-go) | 上游：分发包长什么样、`install.sh` / `gpm` 各自干什么 |
+
+## 许可证
+
+MIT，© 太极计算机股份有限公司创新研究院。见 [`LICENSE`](LICENSE)。

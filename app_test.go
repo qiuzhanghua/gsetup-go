@@ -1,0 +1,474 @@
+package main
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/qiuzhanghua/gsetup-go/internal/pkgroot"
+	gsrunner "github.com/qiuzhanghua/gsetup-go/internal/runner"
+	pty "github.com/qiuzhanghua/portable-pty"
+)
+
+const manifestYAML = `id: ai-desk
+name: AI Desk
+version: 0.3.1
+requires: [cot, tdp]
+entry:
+  darwin: { bundle: "AI Desk.app" }
+  windows: { exe: ai-desk.exe }
+  linux: { exe: ai-desk }
+setup:
+  darwin: { bundle: "GUI-Setup.app" }
+  windows: { exe: GUI-Setup.exe }
+  linux: { exe: GUI-Setup }
+launch:
+  cmd: ad
+  mode: activate
+`
+
+func write(t *testing.T, path, body string, mode os.FileMode) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), mode); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// fakePackage 造一个"解压出来的包"：清单 + install.sh + payload/AI Desk.app。
+func fakePackage(t *testing.T, script string) string {
+	t.Helper()
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "ad-manifest.yaml"), manifestYAML, 0o644)
+	if script != "" {
+		write(t, filepath.Join(dir, "install.sh"), script, 0o755)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "payload", "AI Desk.app", "Contents", "MacOS"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func newTestApp(t *testing.T, pkgDir string) (*App, string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv(pkgroot.EnvOverride, pkgDir)
+	return &App{goos: "darwin", homeOverride: home}, home
+}
+
+func requirePty(t *testing.T) {
+	t.Helper()
+	m, err := pty.Native().OpenPty(pty.DefaultSize)
+	if err != nil {
+		t.Skipf("这台机器打不开伪终端（沙箱常见）：%v", err)
+	}
+	_ = m.Close()
+}
+
+// collector 把事件收下来，顶替真正的窗口。
+type collector struct {
+	mu     sync.Mutex
+	events []gsrunner.Event
+	names  []string
+	done   map[string]any
+}
+
+func (c *collector) hook(name string, payload any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.names = append(c.names, name)
+	if ev, ok := payload.(gsrunner.Event); ok {
+		c.events = append(c.events, ev)
+	}
+	if name == "done" {
+		if m, ok := payload.(map[string]any); ok {
+			c.done = m
+		}
+	}
+}
+
+func (c *collector) text(stream string) []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []string
+	for _, ev := range c.events {
+		if ev.Stream == stream {
+			out = append(out, ev.Text)
+		}
+	}
+	return out
+}
+
+func (c *collector) has(name string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, n := range c.names {
+		if n == name {
+			return true
+		}
+	}
+	return false
+}
+
+func TestBootstrapReadsPackage(t *testing.T) {
+	pkg := fakePackage(t, "#!/bin/sh\nexit 0\n")
+	a, home := newTestApp(t, pkg)
+
+	st := a.Bootstrap()
+	if !st.OK {
+		t.Fatalf("该认得出这个包，得到 %s", st.Message)
+	}
+	if st.ID != "ai-desk" || st.Name != "AI Desk" || st.Version != "0.3.1" || st.Cmd != "ad" {
+		t.Fatalf("清单字段对不上：%+v", st)
+	}
+	if st.Short != "ad" {
+		t.Fatalf("简称该是 ad，得到 %s", st.Short)
+	}
+	if !st.HasSetup {
+		t.Fatal("清单里有 setup: darwin，该报 true")
+	}
+	if st.Script != filepath.Join(pkg, "install.sh") {
+		t.Fatalf("Script = %s", st.Script)
+	}
+	if st.DefaultToolchain != "cot" {
+		t.Fatalf("缺省工具链该是 requires 里的第一个，得到 %s", st.DefaultToolchain)
+	}
+	if st.DefaultHome != filepath.Join(home, "cot") {
+		t.Fatalf("缺省安装路径该是 ~/cot，得到 %s", st.DefaultHome)
+	}
+	if len(st.Installs) != 2 {
+		t.Fatalf("两个家都该列出来，得到 %+v", st.Installs)
+	}
+	for _, inst := range st.Installs {
+		if inst.Installed {
+			t.Fatalf("干净家里不该报已装：%+v", inst)
+		}
+	}
+}
+
+// 找不到包根时那一句话要能让人知道怎么办。
+func TestBootstrapWithoutPackage(t *testing.T) {
+	a, _ := newTestApp(t, t.TempDir())
+	st := a.Bootstrap()
+	if st.OK {
+		t.Fatal("空目录里不该认得出包")
+	}
+	if !strings.Contains(st.Message, "请把 GUI-Setup 放回解压出来的目录") {
+		t.Fatalf("Message = %q", st.Message)
+	}
+}
+
+// 命令预览：参数只有一处定义，显示的和 exec 的是同一份。
+func TestPlanCommandLine(t *testing.T) {
+	pkg := fakePackage(t, "#!/bin/sh\nexit 0\n")
+	a, home := newTestApp(t, pkg)
+
+	p := a.Plan("cot", "", true)
+	if !p.OK {
+		t.Fatalf("该能规划，得到 %s", p.Message)
+	}
+	if p.Program != filepath.Join(pkg, "install.sh") {
+		t.Fatalf("Program = %s", p.Program)
+	}
+	want := []string{"--dir", filepath.Join(home, "cot"), "--with", "cot", "--yes"}
+	if strings.Join(p.Args, " ") != strings.Join(want, " ") {
+		t.Fatalf("Args = %v，想要 %v", p.Args, want)
+	}
+	if !strings.HasPrefix(p.Display, "./install.sh --dir ") {
+		t.Fatalf("Display = %q", p.Display)
+	}
+	if !strings.Contains(p.Display, "--with cot --yes") {
+		t.Fatalf("Display = %q", p.Display)
+	}
+	if p.Warning != "" {
+		t.Fatalf("干净家里不该有警告，得到 %q", p.Warning)
+	}
+	if !filepath.IsAbs(p.Home) {
+		t.Fatalf("家该是绝对路径，得到 %s", p.Home)
+	}
+}
+
+func TestPlanDefaultsToDefaultToolchain(t *testing.T) {
+	pkg := fakePackage(t, "#!/bin/sh\nexit 0\n")
+	a, home := newTestApp(t, pkg)
+
+	p := a.Plan("", "", false)
+	if !p.OK || p.Toolchain != "cot" {
+		t.Fatalf("空工具链该退回缺省，得到 %+v", p)
+	}
+	if p.Args[4] != "--no-path" {
+		t.Fatalf("不勾 PATH 集成该传 --no-path，得到 %v", p.Args)
+	}
+	if p.Args[1] != filepath.Join(home, "cot") {
+		t.Fatalf("家不对：%v", p.Args)
+	}
+}
+
+func TestPlanRejectsBadInput(t *testing.T) {
+	pkg := fakePackage(t, "#!/bin/sh\nexit 0\n")
+	a, _ := newTestApp(t, pkg)
+
+	if p := a.Plan("cargo", "", false); p.OK {
+		t.Fatal("不认识的工具链该拒绝")
+	}
+	if p := a.Plan("cot", "cot", false); p.OK || !strings.Contains(p.Message, "绝对路径") {
+		t.Fatalf("相对路径该拒绝，得到 %+v", p)
+	}
+}
+
+func TestPlanWarnsOnMissingRequires(t *testing.T) {
+	pkg := t.TempDir()
+	write(t, filepath.Join(pkg, "ad-manifest.yaml"), "id: ai-desk\nname: AI Desk\nversion: 0.3.1\nrequires: [cot]\n", 0o644)
+	write(t, filepath.Join(pkg, "install.sh"), "#!/bin/sh\nexit 0\n", 0o755)
+	a, _ := newTestApp(t, pkg)
+
+	p := a.Plan("tdp", "", false)
+	if !p.OK {
+		t.Fatalf("还能规划，得到 %s", p.Message)
+	}
+	if !strings.Contains(p.Warning, "requires 里没有 tdp") {
+		t.Fatalf("该提醒一句，得到 %q", p.Warning)
+	}
+}
+
+func TestPlanWarnsWhenAlreadyInstalled(t *testing.T) {
+	pkg := fakePackage(t, "#!/bin/sh\nexit 0\n")
+	a, home := newTestApp(t, pkg)
+	write(t, filepath.Join(home, "cot", "cot-state.json"),
+		`{"schemaVersion":1,"packages":[{"id":"ai-desk","version":"0.3.0"}]}`, 0o644)
+
+	st := a.Bootstrap()
+	if len(st.Installs) != 2 || !st.Installs[0].Installed || !st.Installs[0].NeedsUpgrade {
+		t.Fatalf("该认出装过并且更旧：%+v", st.Installs)
+	}
+	p := a.Plan("cot", "", false)
+	if !strings.Contains(p.Warning, "覆盖式升级") {
+		t.Fatalf("该提醒会覆盖，得到 %q", p.Warning)
+	}
+}
+
+func TestPlanNeedsScriptInPackage(t *testing.T) {
+	pkg := fakePackage(t, "") // 不放 install.sh
+	a, _ := newTestApp(t, pkg)
+	p := a.Plan("cot", "", false)
+	if p.OK || !strings.Contains(p.Message, "包里没有") {
+		t.Fatalf("少脚本该拒绝，得到 %+v", p)
+	}
+}
+
+// 真跑一遍：pty 里输出按行走、stderr 在 Unix 上单独标红。
+func TestStartRunsScriptInPty(t *testing.T) {
+	script := "#!/bin/sh\necho \"装到 $2\"\necho oops 1>&2\nexit 0\n"
+	pkg := fakePackage(t, script)
+	a, home := newTestApp(t, pkg)
+	requirePty(t)
+	c := &collector{}
+	a.emitHook = c.hook
+
+	res := a.Start("cot", "", true)
+	if !res.Success {
+		t.Fatalf("该成功，得到 %+v", res)
+	}
+	if got := c.text(gsrunner.StreamStdout); len(got) != 1 || got[0] != "装到 "+filepath.Join(home, "cot") {
+		t.Fatalf("stdout = %v", got)
+	}
+	if got := c.text(gsrunner.StreamStderr); len(got) != 1 || got[0] != "oops" {
+		t.Fatalf("stderr = %v", got)
+	}
+	if !c.has("start") || !c.has("done") {
+		t.Fatalf("start / done 事件该发出去，得到 %v", c.names)
+	}
+	if c.done == nil || c.done["result"] == nil {
+		t.Fatalf("done 该带上结果：%+v", c.done)
+	}
+}
+
+func TestStartReportsFailure(t *testing.T) {
+	pkg := fakePackage(t, "#!/bin/sh\nexit 7\n")
+	a, _ := newTestApp(t, pkg)
+	requirePty(t)
+	c := &collector{}
+	a.emitHook = c.hook
+
+	res := a.Start("cot", "", false)
+	if res.Success || res.Code != 7 {
+		t.Fatalf("该报失败 7，得到 %+v", res)
+	}
+	if res.Message() != "失败（退出码 7）" {
+		t.Fatalf("Message = %q", res.Message())
+	}
+}
+
+func TestUninstallCallsGpmInHome(t *testing.T) {
+	pkg := fakePackage(t, "#!/bin/sh\nexit 0\n")
+	a, home := newTestApp(t, pkg)
+	requirePty(t)
+	cot := filepath.Join(home, "cot")
+	write(t, filepath.Join(cot, "cot-state.json"),
+		`{"schemaVersion":1,"packages":[{"id":"ai-desk","version":"0.3.1"}]}`, 0o644)
+	write(t, filepath.Join(cot, "bin", "gpm"), "#!/bin/sh\necho got: \"$@\"\nexit 0\n", 0o755)
+	c := &collector{}
+	a.emitHook = c.hook
+
+	res := a.Uninstall(cot)
+	if !res.Success {
+		t.Fatalf("该成功，得到 %+v", res)
+	}
+	got := strings.Join(c.text(gsrunner.StreamStdout), "|")
+	if got != "got: uninstall ai-desk --yes" {
+		t.Fatalf("gpm 收到的参数不对：%q", got)
+	}
+	display := strings.Join(c.text(gsrunner.StreamSystem), "|")
+	if !strings.Contains(display, "uninstall ai-desk --yes") {
+		t.Fatalf("系统行该给人看命令：%q", display)
+	}
+}
+
+func TestUninstallWithoutLedger(t *testing.T) {
+	pkg := fakePackage(t, "#!/bin/sh\nexit 0\n")
+	a, home := newTestApp(t, pkg)
+	res := a.Uninstall(filepath.Join(home, "cot"))
+	if res.Err == "" || !strings.Contains(res.Err, "没记账") {
+		t.Fatalf("干净家该说没记账，得到 %+v", res)
+	}
+}
+
+func TestUninstallWithoutGpm(t *testing.T) {
+	pkg := fakePackage(t, "#!/bin/sh\nexit 0\n")
+	a, home := newTestApp(t, pkg)
+	cot := filepath.Join(home, "cot")
+	write(t, filepath.Join(cot, "cot-state.json"),
+		`{"schemaVersion":1,"packages":[{"id":"ai-desk","version":"0.3.1"}]}`, 0o644)
+	res := a.Uninstall(cot)
+	if res.Err == "" || !strings.Contains(res.Err, "家里没有") {
+		t.Fatalf("没有 gpm 该说清楚，得到 %+v", res)
+	}
+}
+
+// 一次只能跑一条：第二条要当场被拒，不能两条命令抢同一个终端。
+// 需求 §6：卸载之前要把 gpm 即将回放删掉的东西先摊开。
+func TestPlanUninstallListsWhatWillGo(t *testing.T) {
+	pkg := fakePackage(t, "#!/bin/sh\nexit 0\n")
+	a, home := newTestApp(t, pkg)
+	cot := filepath.Join(home, "cot")
+	app := filepath.Join(cot, "AI Desk.app")
+	launcher := filepath.Join(cot, "bin", "ad")
+	link := filepath.Join(home, "Applications", "AI Desk.app")
+	rc := filepath.Join(home, ".zshrc")
+
+	write(t, filepath.Join(cot, "bin", "gpm"), "#!/bin/sh\nexit 0\n", 0o755)
+	write(t, filepath.Join(app, "Contents", "Info.plist"), "x", 0o644)
+	write(t, launcher, "#!/bin/sh\nexit 0\n", 0o755)
+	write(t, rc, "# >>> gpm >>>\n", 0o644)
+	// 图形入口故意不建：界面上该画成"已经不在"。
+	write(t, filepath.Join(cot, "cot-state.json"), `{"schemaVersion":1,"packages":[{
+		"id":"ai-desk","name":"AI Desk","version":"0.3.1",
+		"dir":`+jsonString(app)+`,"entry":"AI Desk.app","entryKind":"bundle","cmd":"ad",
+		"launcher":`+jsonString(launcher)+`,
+		"links":[{"path":`+jsonString(link)+`,"kind":"app-symlink"}],
+		"pathEdits":[{"path":`+jsonString(rc)+`,"created":false}],
+		"verified":true}]}`, 0o644)
+
+	p := a.PlanUninstall(cot)
+	if !p.OK {
+		t.Fatalf("该能规划卸载，得到 %s", p.Message)
+	}
+	if p.Version != "0.3.1" || p.Home != cot {
+		t.Fatalf("头部不对：%+v", p)
+	}
+	want := []struct {
+		kind    string
+		path    string
+		present bool
+	}{
+		{"应用（图形入口）", app, true},
+		{"启动器", launcher, true},
+		{"图形入口", link, false},
+		{"PATH 块", rc, true},
+	}
+	if len(p.Items) != len(want) {
+		t.Fatalf("清单该有 %d 项，得到 %+v", len(want), p.Items)
+	}
+	for i, w := range want {
+		got := p.Items[i]
+		if got.Kind != w.kind || got.Path != w.path || got.Present != w.present {
+			t.Fatalf("第 %d 项不对：%+v，想要 %+v", i, got, w)
+		}
+		if got.Display == "" {
+			t.Fatalf("第 %d 项该有给人看的形式：%+v", i, got)
+		}
+	}
+	if !strings.Contains(p.Display, "uninstall ai-desk --yes") {
+		t.Fatalf("Display = %q", p.Display)
+	}
+	if !strings.HasSuffix(p.Program, filepath.Join("bin", "gpm")) {
+		t.Fatalf("Program = %s", p.Program)
+	}
+	if p.Warning == "" {
+		t.Fatal("该说明工具链自己不会被卸掉")
+	}
+}
+
+func TestPlanUninstallWithoutLedger(t *testing.T) {
+	pkg := fakePackage(t, "#!/bin/sh\nexit 0\n")
+	a, home := newTestApp(t, pkg)
+	p := a.PlanUninstall(filepath.Join(home, "cot"))
+	if p.OK || !strings.Contains(p.Message, "没记账") {
+		t.Fatalf("干净家该说没记账，得到 %+v", p)
+	}
+}
+
+func TestPlanUninstallWithoutGpm(t *testing.T) {
+	pkg := fakePackage(t, "#!/bin/sh\nexit 0\n")
+	a, home := newTestApp(t, pkg)
+	cot := filepath.Join(home, "cot")
+	write(t, filepath.Join(cot, "cot-state.json"),
+		`{"schemaVersion":1,"packages":[{"id":"ai-desk","version":"0.3.1"}]}`, 0o644)
+	p := a.PlanUninstall(cot)
+	if p.OK || !strings.Contains(p.Message, "家里没有") {
+		t.Fatalf("没有 gpm 该说清楚，得到 %+v", p)
+	}
+}
+
+func jsonString(s string) string {
+	raw, err := json.Marshal(s)
+	if err != nil {
+		panic(err)
+	}
+	return string(raw)
+}
+
+func TestStartRejectsConcurrentRun(t *testing.T) {
+	pkg := fakePackage(t, "#!/bin/sh\nsleep 2\nexit 0\n")
+	a, _ := newTestApp(t, pkg)
+	requirePty(t)
+
+	done := make(chan gsrunner.Result, 1)
+	go func() { done <- a.Start("cot", "", false) }()
+
+	// 等它就位再打第二条
+	busy := false
+	for i := 0; i < 200; i++ {
+		a.mu.Lock()
+		busy = a.busy
+		a.mu.Unlock()
+		if busy {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if !busy {
+		t.Fatal("第一条该占住位置")
+	}
+	second := a.Start("cot", "", false)
+	if second.Err == "" || !strings.Contains(second.Err, "还在跑") {
+		t.Fatalf("第二条该被拒，得到 %+v", second)
+	}
+	<-done
+}

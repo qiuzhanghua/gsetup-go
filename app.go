@@ -1,0 +1,497 @@
+// GUI-Setup：给 gpm 打包出来的 GUI 应用配一个图形安装向导。
+//
+// 它自己什么也不装：找到包根、读清单、把用户的选择翻成一条命令，
+// 然后在真 pty 里把 install.sh / install.cmd 跑起来，输出原样搬到窗口里。
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
+
+	"github.com/qiuzhanghua/gsetup-go/internal/ledger"
+	"github.com/qiuzhanghua/gsetup-go/internal/manifest"
+	"github.com/qiuzhanghua/gsetup-go/internal/pkgroot"
+	gsrunner "github.com/qiuzhanghua/gsetup-go/internal/runner"
+	"github.com/qiuzhanghua/gsetup-go/internal/wizard"
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
+)
+
+// App 是绑定给前端的那个对象。
+type App struct {
+	ctx context.Context
+
+	mu   sync.Mutex
+	busy bool
+
+	root     string
+	man      *manifest.Manifest
+	userHome string
+	goos     string
+	loadErr  string
+
+	// 这三个是给测试用的：真机上永远不设。
+	homeOverride string
+	emitHook     func(name string, payload any)
+	envOverride  []string
+}
+
+// NewApp 建一个。
+func NewApp() *App {
+	return &App{goos: runtime.GOOS}
+}
+
+func (a *App) startup(ctx context.Context) {
+	a.ctx = ctx
+	a.ensure()
+}
+
+// ensure 只解析一次包根与清单；解析不了就把话记住，后面每个入口都把它报出来。
+func (a *App) ensure() error {
+	if a.loadErr != "" {
+		return fmt.Errorf("%s", a.loadErr)
+	}
+	if a.man != nil {
+		return nil
+	}
+	if a.homeOverride != "" {
+		a.userHome = a.homeOverride
+	} else if home, err := os.UserHomeDir(); err == nil {
+		a.userHome = home
+	}
+	root, name, err := pkgroot.FindFromExecutable()
+	if err != nil {
+		a.loadErr = err.Error() + "。请把 GUI-Setup 放回解压出来的目录里再运行。"
+		return fmt.Errorf("%s", a.loadErr)
+	}
+	man, err := manifest.Parse(filepath.Join(root, name))
+	if err != nil {
+		a.loadErr = err.Error()
+		return fmt.Errorf("%s", a.loadErr)
+	}
+	a.root, a.man = root, man
+	return nil
+}
+
+// Installation 是界面 A 里的一行：某个家里装没装、装了哪个版本。
+type Installation struct {
+	Toolchain     string `json:"toolchain"`
+	Home          string `json:"home"`
+	HomeDisplay   string `json:"homeDisplay"`
+	Installed     bool   `json:"installed"`
+	Version       string `json:"version"`
+	Cmd           string `json:"cmd"`
+	NeedsUpgrade  bool   `json:"needsUpgrade"`
+	Verified      bool   `json:"verified"`
+	Uninstallable bool   `json:"uninstallable"`
+}
+
+// State 是窗口打开时的那份底稿。
+type State struct {
+	OK               bool           `json:"ok"`
+	Message          string         `json:"message"`
+	Root             string         `json:"root"`
+	Short            string         `json:"short"`
+	ID               string         `json:"id"`
+	Name             string         `json:"name"`
+	Version          string         `json:"version"`
+	Cmd              string         `json:"cmd"`
+	Goos             string         `json:"goos"`
+	UserHome         string         `json:"userHome"`
+	Toolchains       []string       `json:"toolchains"`
+	DefaultToolchain string         `json:"defaultToolchain"`
+	DefaultHome      string         `json:"defaultHome"`
+	Installs         []Installation `json:"installs"`
+	Script           string         `json:"script"`
+	ScriptDisplay    string         `json:"scriptDisplay"`
+	HasSetup         bool           `json:"hasSetup"`
+}
+
+// Bootstrap 是前端的第一句调用：报包根、清单、以及两个家里已经装了什么。
+func (a *App) Bootstrap() State {
+	if err := a.ensure(); err != nil {
+		return State{OK: false, Message: err.Error(), Goos: a.goos, UserHome: a.userHome}
+	}
+	st := State{
+		OK:         true,
+		Root:       a.root,
+		Short:      a.man.Short,
+		ID:         a.man.ID,
+		Name:       a.man.Name,
+		Version:    a.man.Version,
+		Cmd:        a.man.Launch.Cmd,
+		Goos:       a.goos,
+		UserHome:   a.userHome,
+		HasSetup:   a.man.SetupEntry(a.goos).Rel() != "",
+		Toolchains: wizard.Toolchains,
+	}
+	st.Script = wizard.Script(a.root, a.goos)
+	st.ScriptDisplay = wizard.ScriptName(a.goos)
+
+	def := a.man.DefaultToolchain()
+	st.DefaultToolchain = def
+	st.DefaultHome = wizard.DefaultHome(a.userHome, def)
+
+	// 两个家都看一眼：清单说 requires: [cot, tdp]，而用户可能装在另一个家里。
+	seen := map[string]bool{}
+	for _, t := range append(a.man.Toolchains(), wizard.Toolchains...) {
+		if seen[t] {
+			continue
+		}
+		seen[t] = true
+		st.Installs = append(st.Installs, a.inspect(t))
+	}
+	return st
+}
+
+func (a *App) inspect(toolchain string) Installation {
+	home := wizard.DefaultHome(a.userHome, toolchain)
+	inst := Installation{
+		Toolchain:   toolchain,
+		Home:        home,
+		HomeDisplay: display(home, a.goos),
+	}
+	inst.Uninstallable = fileExists(gpmPath(home, a.goos))
+
+	led, err := ledger.Load(home)
+	if err != nil {
+		return inst
+	}
+	p := led.Find(a.man.ID)
+	if p == nil {
+		return inst
+	}
+	inst.Installed = true
+	inst.Version = p.Version
+	inst.Cmd = p.Cmd
+	inst.Verified = p.Verified
+	inst.NeedsUpgrade = wizard.VersionLess(p.Version, a.man.Version)
+	return inst
+}
+
+// Plan 是"将要执行什么"的完整答案：给人看的那一行，和真正 exec 的 argv。
+type Plan struct {
+	OK          bool     `json:"ok"`
+	Message     string   `json:"message"`
+	Toolchain   string   `json:"toolchain"`
+	Home        string   `json:"home"`
+	HomeDisplay string   `json:"homeDisplay"`
+	AddToPath   bool     `json:"addToPath"`
+	Program     string   `json:"program"`
+	Args        []string `json:"args"`
+	Display     string   `json:"display"`
+	Dir         string   `json:"dir"`
+	Script      string   `json:"script"`
+	Warning     string   `json:"warning"`
+}
+
+// Plan 只在内存里算，不动磁盘（需求 §4.3：先把要执行的命令只读地摊给用户看）。
+func (a *App) Plan(toolchain, home string, addToPath bool) Plan {
+	if err := a.ensure(); err != nil {
+		return Plan{OK: false, Message: err.Error()}
+	}
+	toolchain = strings.TrimSpace(toolchain)
+	if toolchain == "" {
+		toolchain = a.man.DefaultToolchain()
+	}
+	if !wizard.KnownToolchain(toolchain) {
+		return Plan{OK: false, Message: "工具链只认 cot 或 tdp，收到的是「" + toolchain + "」"}
+	}
+	home = a.resolveHome(home, toolchain)
+	if !filepath.IsAbs(home) {
+		return Plan{OK: false, Message: "安装路径要写绝对路径（比如 ~/cot），收到的是「" + home + "」"}
+	}
+	c := wizard.Choice{Home: home, Toolchain: toolchain, AddToPath: addToPath}
+	p := Plan{
+		OK:          true,
+		Toolchain:   toolchain,
+		Home:        home,
+		HomeDisplay: display(home, a.goos),
+		AddToPath:   addToPath,
+		Display:     wizard.Display(a.root, c, a.goos),
+		Dir:         a.root,
+		Script:      wizard.Script(a.root, a.goos),
+	}
+	p.Program, p.Args = wizard.Argv(a.root, c, a.goos)
+
+	if !fileExists(p.Script) {
+		p.OK = false
+		p.Message = "包里没有 " + p.Script + "——是不是只解压了一半？"
+		return p
+	}
+	if !contains(a.man.Requires, toolchain) {
+		p.Warning = "清单的 requires 里没有 " + toolchain + "，--with " + toolchain + " 可能会被 gpm 拒绝。"
+	}
+	if inst := a.inspect(toolchain); inst.Installed {
+		msg := fmt.Sprintf("这个家里已经装过 %s %s，再装一次就是覆盖式升级。", a.man.Name, inst.Version)
+		if p.Warning != "" {
+			p.Warning += " "
+		}
+		p.Warning += msg
+	}
+	return p
+}
+
+// Start 真的跑起来。输出通过 "output" 事件一行一行推给前端，结束时发 "done"。
+func (a *App) Start(toolchain, home string, addToPath bool) gsrunner.Result {
+	p := a.Plan(toolchain, home, addToPath)
+	if !p.OK {
+		return gsrunner.Result{Err: p.Message}
+	}
+	if !a.lock() {
+		return gsrunner.Result{Err: "上一条命令还在跑，等它结束。"}
+	}
+	defer a.unlock()
+
+	a.emit("start", map[string]any{"display": p.Display, "home": p.Home, "toolchain": p.Toolchain})
+	a.emit("output", gsrunner.Event{Stream: gsrunner.StreamSystem, Text: "$ " + p.Display})
+	if p.Warning != "" {
+		a.emit("output", gsrunner.Event{Stream: gsrunner.StreamSystem, Text: "注意：" + p.Warning})
+	}
+
+	res := gsrunner.Run(gsrunner.Options{
+		Dir:     p.Dir,
+		Command: p.Program,
+		Args:    p.Args,
+		Env:     a.envOverride,
+		Emit:    func(ev gsrunner.Event) { a.emit("output", ev) },
+	})
+	a.emit("done", map[string]any{"action": "install", "result": res, "message": res.Message()})
+	return res
+}
+
+// Removal 是卸载清单里的一行：即将被回放删掉的东西。
+type Removal struct {
+	Kind    string `json:"kind"`
+	Path    string `json:"path"`
+	Display string `json:"display"`
+	Present bool   `json:"present"`
+}
+
+// UninstallPlan 是"卸载会删掉什么"的答案。
+//
+// 需求 §6：卸载界面要把 gpm 即将删的东西**先列出来**（入口 / 启动器 / 图形入口 /
+// PATH 块），再让用户点"确认卸载"——清单就是 gpm v3.9 `askUninstall` 会摊开的那一份，
+// 来源是账本（D28：账本是所有外部副作用的唯一真相）。
+type UninstallPlan struct {
+	OK          bool      `json:"ok"`
+	Message     string    `json:"message"`
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Version     string    `json:"version"`
+	Home        string    `json:"home"`
+	HomeDisplay string    `json:"homeDisplay"`
+	Items       []Removal `json:"items"`
+	Program     string    `json:"program"`
+	Args        []string  `json:"args"`
+	Display     string    `json:"display"`
+	Warning     string    `json:"warning"`
+}
+
+// PlanUninstall 只看账本、只碰磁盘的读操作，不动任何东西。真正的删除交给家里的 gpm。
+func (a *App) PlanUninstall(home string) UninstallPlan {
+	if err := a.ensure(); err != nil {
+		return UninstallPlan{OK: false, Message: err.Error()}
+	}
+	home = a.resolveHome(home, a.man.DefaultToolchain())
+	p := UninstallPlan{
+		ID:          a.man.ID,
+		Name:        a.man.Name,
+		Version:     a.man.Version,
+		Home:        home,
+		HomeDisplay: display(home, a.goos),
+	}
+	led, err := ledger.Load(home)
+	if err != nil {
+		p.Message = "账本读不了：" + err.Error()
+		return p
+	}
+	pkg := led.Find(a.man.ID)
+	if pkg == nil {
+		p.Message = "这个家（" + p.HomeDisplay + "）里没记账装过 " + a.man.Name + "。"
+		return p
+	}
+	p.Version = pkg.Version
+
+	add := func(kind, path string) {
+		if strings.TrimSpace(path) == "" {
+			return
+		}
+		p.Items = append(p.Items, Removal{
+			Kind:    kind,
+			Path:    path,
+			Display: display(path, a.goos),
+			Present: pathExists(path),
+		})
+	}
+	add(kindLabel(pkg.EntryKind), pkg.Dir)
+	add("启动器", pkg.Launcher)
+	for _, l := range pkg.LinkPaths() {
+		add("图形入口", l)
+	}
+	for _, f := range pkg.PathEditFiles() {
+		add("PATH 块", f)
+	}
+
+	prog, args := wizard.UninstallArgv(home, a.man.ID, a.goos)
+	p.Program, p.Args = prog, args
+	p.Display = wizard.UninstallDisplay(home, a.man.ID, a.goos)
+
+	if !fileExists(prog) {
+		p.Message = "家里没有 " + prog + "，得在终端里自己卸：" + p.Display
+		return p
+	}
+	p.OK = true
+	// 清单之外的别乱猜：工具链自己（cot / tdp）不在这个包的账上，不会被卸掉。
+	p.Warning = "只删这本账记着的东西。cot / tdp 自己是另一套账，不会被卸掉。"
+	return p
+}
+
+// Uninstall 走"家里的 gpm"，不经脚本：卸载不需要包，需要的只是账本。
+func (a *App) Uninstall(home string) gsrunner.Result {
+	if err := a.ensure(); err != nil {
+		return gsrunner.Result{Err: err.Error()}
+	}
+	home = a.resolveHome(home, a.man.DefaultToolchain())
+	led, err := ledger.Load(home)
+	if err != nil {
+		return gsrunner.Result{Err: "账本读不了：" + err.Error()}
+	}
+	pkg := led.Find(a.man.ID)
+	if pkg == nil {
+		return gsrunner.Result{Err: "这个家（" + display(home, a.goos) + "）里没记账装过 " + a.man.Name + "。"}
+	}
+	prog, args := wizard.UninstallArgv(home, a.man.ID, a.goos)
+	if !fileExists(prog) {
+		return gsrunner.Result{Err: "家里没有 " + prog + "，得在终端里自己卸。"}
+	}
+	if !a.lock() {
+		return gsrunner.Result{Err: "上一条命令还在跑，等它结束。"}
+	}
+	defer a.unlock()
+
+	a.emit("start", map[string]any{"display": wizard.UninstallDisplay(home, a.man.ID, a.goos), "home": home, "toolchain": ""})
+	a.emit("output", gsrunner.Event{Stream: gsrunner.StreamSystem, Text: "$ " + wizard.UninstallDisplay(home, a.man.ID, a.goos)})
+	res := gsrunner.Run(gsrunner.Options{
+		Dir:     a.root,
+		Command: prog,
+		Args:    args,
+		Env:     a.envOverride,
+		Emit:    func(ev gsrunner.Event) { a.emit("output", ev) },
+	})
+	a.emit("done", map[string]any{"action": "uninstall", "result": res, "message": res.Message()})
+	return res
+}
+
+// Quit 是界面 C 上那个"关掉它"的按钮。
+func (a *App) Quit() {
+	if a.ctx != nil {
+		wailsruntime.Quit(a.ctx)
+	}
+}
+
+// OpenFolder 在文件管理器里打开这个家（顺手给的）。
+func (a *App) OpenFolder(path string) string {
+	if path == "" {
+		return ""
+	}
+	if err := a.ensure(); err != nil {
+		return err.Error()
+	}
+	if err := reveal(path); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
+func (a *App) resolveHome(home, toolchain string) string {
+	home = strings.TrimSpace(home)
+	switch {
+	case home == "":
+		return wizard.DefaultHome(a.userHome, toolchain)
+	case home == "~":
+		return a.userHome
+	case strings.HasPrefix(home, "~/"):
+		return filepath.Join(a.userHome, home[2:])
+	default:
+		return filepath.Clean(home)
+	}
+}
+
+func (a *App) emit(name string, payload any) {
+	if a.emitHook != nil {
+		a.emitHook(name, payload)
+	}
+	if a.ctx != nil {
+		wailsruntime.EventsEmit(a.ctx, name, payload)
+	}
+}
+
+func (a *App) lock() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.busy {
+		return false
+	}
+	a.busy = true
+	return true
+}
+
+func (a *App) unlock() {
+	a.mu.Lock()
+	a.busy = false
+	a.mu.Unlock()
+}
+
+func gpmPath(home, goos string) string {
+	name := "gpm"
+	if goos == "windows" {
+		name += ".exe"
+	}
+	return wizard.Join(goos, home, "bin", name)
+}
+
+func display(path, goos string) string {
+	if abbrev, ok := wizard.AbbrevHome(path, goos); ok {
+		return abbrev
+	}
+	return path
+}
+
+func fileExists(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && !st.IsDir()
+}
+
+// pathExists 连软链本身也算"在"（账本里记的图形入口就是软链）。
+func pathExists(path string) bool {
+	_, err := os.Lstat(path)
+	return err == nil
+}
+
+// kindLabel 把账本里的 entryKind 翻成人话。
+func kindLabel(kind string) string {
+	switch kind {
+	case "bundle":
+		return "应用（图形入口）"
+	case "exe":
+		return "程序"
+	case "":
+		return "安装内容"
+	default:
+		return kind
+	}
+}
+
+func contains(list []string, want string) bool {
+	for _, v := range list {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}

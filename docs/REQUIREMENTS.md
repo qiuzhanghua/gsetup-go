@@ -225,8 +225,8 @@ GUI-Setup 是**随包跑的**（在解压出来的目录里双击），不是装
 | `gpm-go` | 生成的 `install.sh` / `install.cmd` 把参数原样转交（`"$@"` / `%*`，拼在烘进去的 `--dir` 之后） | ✅ v3.12 已完成 |
 | `gpm-go` | `gpm pack` 多一个 `--setup <路径>` 参数 + 清单解析 `setup:`（复用 `Entry`，按 GOOS 挑一项，bundle/exe 二选一），把顶层那份打进 zip 并保住可执行位；PACKAGE-FORMAT 里写清两个相对根 | ⬜ 待做 |
 | `gpm-go` | （可选）`gpm list` 输出里带上版本，方便 GUI 端判断"能不能升级" | ⬜ 待确认（账本自己读也行） |
-| `ai-desk` | CI 先构建 `gsetup-go`，把 `GUI-Setup` 放进装配目录的 `setup/`；`GPM_REF` 跟到带 v3.12 的 gpm | ⬜ 待做 |
-| `ai-desk` | 清单 `ad-manifest.yaml` 加 `setup:` 段 | ⬜ 待做 |
+| `ai-desk` | CI 先构建 `gsetup-go`，把 `GUI-Setup` / `GUI-Setup.exe` 与 `install.sh` 并排放在装配目录**顶层**（不另起 `setup/`，见 §2.1）；`GPM_REF` 跟到带 v3.12 的 gpm | ⬜ 待做 |
+| `ai-desk` | 清单 `ad-manifest.yaml` 加 `setup:` 段（`darwin: { bundle: "GUI-Setup.app" }`、`windows: { exe: GUI-Setup.exe }`） | ⬜ 待做 |
 
 ## 8. 明确不做
 

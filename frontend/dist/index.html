@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GUI-Setup</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="/wails/runtime.js"></script>
+</head>
+<body>
+  <main id="app">
+    <header>
+      <h1 id="title">正在看这个包…</h1>
+      <p id="subtitle" class="muted"></p>
+    </header>
+
+    <section id="error-box" class="hidden card error-card">
+      <p id="error-message"></p>
+      <p class="muted">把 GUI-Setup 放回解压出来的那个目录，和 install.sh 摆在一起，再双击它。</p>
+    </section>
+
+    <section id="installed-box" class="hidden card">
+      <h2>这个家里已经装过了</h2>
+      <div id="installed-list"></div>
+    </section>
+
+    <section id="removal-box" class="hidden card">
+      <h2>卸载会删掉这些</h2>
+      <p id="removal-title" class="muted small"></p>
+      <ul id="removal-list" class="removal"></ul>
+      <p id="removal-warning" class="warn small hidden"></p>
+      <div class="row">
+        <span class="grow muted small" id="removal-command"></span>
+        <button id="remove-cancel" class="ghost">取消</button>
+        <button id="remove-confirm" class="danger">确认卸载</button>
+      </div>
+    </section>
+
+    <section id="choose-box" class="card hidden">
+      <h2>要装到哪儿</h2>
+
+      <div class="field">
+        <label>命令行工具链</label>
+        <div id="toolchains" class="radios"></div>
+        <p class="muted small">选一家就只装这一家：另一家的工具链这次不装（<code>--with</code>）。</p>
+      </div>
+
+      <div class="field">
+        <label for="home">安装路径</label>
+        <input id="home" type="text" spellcheck="false" autocomplete="off" />
+        <p class="muted small">默认 <code>~/cot</code> / <code>~/tdp</code>，可以改成别的地方。</p>
+      </div>
+
+      <div class="field checkbox">
+        <label>
+          <input id="add-to-path" type="checkbox" checked />
+          让终端里也能直接用 <code id="cmd-name">ad</code> 命令
+        </label>
+        <p class="muted small">勾上就是 <code>--yes</code>（会动 <code>~/.zshrc</code> 那几个文件）；不勾就是 <code>--no-path</code>。</p>
+      </div>
+    </section>
+
+    <section id="command-box" class="card hidden">
+      <h2>将会执行</h2>
+      <pre id="command" class="command"></pre>
+      <p id="warning" class="warn small hidden"></p>
+      <p class="muted small">这是只读的预览。真正动手之前你可以先照抄到终端里自己看一眼。</p>
+    </section>
+
+    <section id="output-box" class="card hidden">
+      <h2>执行过程</h2>
+      <pre id="output" class="output"></pre>
+    </section>
+  </main>
+
+  <footer>
+    <span id="status" class="muted"></span>
+    <span class="spacer"></span>
+    <button id="close-button" class="ghost">关闭</button>
+    <button id="start-button" class="primary" disabled>开始安装</button>
+  </footer>
+
+  <script src="main.js"></script>
+</body>
+</html>

@@ -4,9 +4,22 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+// 这两条用例靠 chmod 000 造出"读不了的目录"：Windows 上 chmod 对目录没有这个效果，
+// root 又什么都不怕 —— 两种情形都跳过，别让它们假装测过了。
+func skipIfChmodIsMeaningless(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows 上 chmod 000 不会让目录读不了")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root 眼里没有读不了的目录")
+	}
+}
 
 func writeFile(t *testing.T, path, body string) {
 	t.Helper()
@@ -55,9 +68,7 @@ func TestFindNotFound(t *testing.T) {
 // 往上爬的时候某一层读不了（EACCES / ERANGE 之类）不该一票否决：继续往上找，
 // 找着了就用；真没找着才报错，并且说清楚哪几层没读成。
 func TestFindSkipsUnreadableDirectory(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root 眼里没有读不了的目录")
-	}
+	skipIfChmodIsMeaningless(t)
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "ad-manifest.yaml"), "id: ai-desk\n")
 	blocked := filepath.Join(root, "blocked")
@@ -81,9 +92,7 @@ func TestFindSkipsUnreadableDirectory(t *testing.T) {
 
 // 一路爬到头都没有清单：报的还是 ErrNotFound，但捎上"哪几层没读成"。
 func TestFindReportsWhatItCouldNotRead(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root 眼里没有读不了的目录")
-	}
+	skipIfChmodIsMeaningless(t)
 	empty := t.TempDir()
 	blocked := filepath.Join(empty, "blocked")
 	deep := filepath.Join(blocked, "inside")

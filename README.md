@@ -49,8 +49,18 @@ Wails 是 CGO + 系统 webview，六个平台得各自原生编一份（gpm 那�
 | `GUI-Setup-<版本>-windows-<arch>.exe` | |
 | `GUI-Setup-<版本>-linux-<arch>` | 裸可执行文件，带 x 位 |
 
-ai-desk 那边目前是**就地编**（checkout `.gsetup-go`，按 `GSETUP_REF` 钉 tag），还没用这些
-现成资产；将来想省那几分钟，可以改成下载这里的 zip / exe。
+ai-desk 那边就是下这里的现成资产（按 `GSETUP_REF` 钉 tag 取对应的 zip / exe / 裸文件），
+不再 checkout 本仓就地编 —— 装进用户包里的，必须就是这里发的那个二进制。
+
+## CI
+
+进 main 与每个 PR 走一遍 vet + test（`.github/workflows/ci.yml`），三个平台各自原生跑：
+`ubuntu-latest`、`macos-latest`、`windows-latest`（Wails 是 CGO + 系统 webview，三套都得
+真在那儿才编得过；Linux 还要 `libgtk-3-dev` 与 `libwebkit2gtk-4.1-dev`，并带上
+`webkit2_41`）。这里**不**做六平台交叉编译 —— 那件事由 release.yml 的六条腿管。
+
+测试本身也按平台写：`#!/bin/sh` 那几条 pty 用例在 Windows 上跳过（那边跑的是
+`install.cmd` / `cmd.exe`），另有一条 Windows 专属用例真的起一个 `cmd.exe` 验退出码。
 
 ## 它怎么进到用户的包里
 

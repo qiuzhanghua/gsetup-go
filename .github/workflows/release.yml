@@ -1,0 +1,136 @@
+name: Release
+
+# 打 tag 就发版；也可以在 Actions 页面手动指定 tag。
+# 产物命名（与 gpm-go 那边一个路子，供 ai-desk 之类的打包方取用）：
+#   GUI-Setup-<版本>-darwin-<arch>.zip    里面是 GUI-Setup.app
+#   GUI-Setup-<版本>-windows-<arch>.exe
+#   GUI-Setup-<版本>-linux-<arch>
+#
+# 与 gpm-go 的 release.yml 有一处必然的不同：gpm 是纯 Go（CGO_ENABLED=0），一个
+# ubuntu runner 能编六个平台；GUI-Setup 是 Wails = Go + 系统 webview，必须 CGO，
+# 所以六个平台各自原生编一份，每条矩阵腿都有自己的 runner。
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 要发布的 tag（例如 v1.0.0）
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: 编译 ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-14,         goos: darwin,  goarch: arm64 }
+          - { os: macos-26-intel,   goos: darwin,  goarch: amd64 }
+          - { os: ubuntu-latest,    goos: linux,   goarch: amd64 }
+          - { os: ubuntu-24.04-arm, goos: linux,   goarch: arm64 }
+          - { os: windows-latest,   goos: windows, goarch: amd64 }
+          - { os: windows-11-arm,   goos: windows, goarch: arm64 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # 徽标 / 关于里的版本号来自 wails.json 的 info.productVersion（Wails 会把它
+      # 写进 Info.plist 与 Windows 资源）。发版的规矩：先把这个号抬好、提交，再打
+      # tag。这里对一下，免得发出一个 tag 说 v1.1.0、程序却自报 1.0.0 的包。
+      - name: 算出版本号，并核对 wails.json
+        id: ver
+        shell: bash
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          version="${tag#v}"
+          declared=$(sed -n 's/.*"productVersion"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' wails.json | head -1)
+          echo "tag=$tag，版本=$version，wails.json 里写着 ${declared:-（没读到）}"
+          if [ "$declared" != "$version" ]; then
+            echo "::error::wails.json 的 productVersion 是「$declared」，tag 却是「$tag」——先把版本号抬上去再打 tag。"
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # Wails 在 Linux 上要的是 webkit2gtk 的头文件，不是可选项。
+      - name: 装 Linux 系统依赖
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: 编 GUI-Setup
+        shell: bash
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          # Ubuntu 24.04 起只有 webkit2gtk-4.1 了，Wails v2 要靠这个 tag 才会
+          # 去找它（4.0 那一支在新镜像上已经不存在）。
+          tags=""
+          if [ "${{ runner.os }}" = "Linux" ]; then tags="-tags webkit2_41"; fi
+          wails build -clean $tags
+          ls -l build/bin
+
+      - name: 打包产物
+        shell: bash
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          mkdir -p dist
+          case "${{ matrix.goos }}" in
+            darwin)
+              out="GUI-Setup-${VERSION}-darwin-${{ matrix.goarch }}.zip"
+              # ditto 是 macOS 自带的，比 zip 更懂 .app（符号链接、x 位、资源叉）。
+              ditto -c -k --sequesterRsrc --keepParent build/bin/GUI-Setup.app "dist/$out"
+              unzip -l "dist/$out" | head -5
+              ;;
+            windows)
+              out="GUI-Setup-${VERSION}-windows-${{ matrix.goarch }}.exe"
+              cp build/bin/GUI-Setup.exe "dist/$out"
+              ;;
+            linux)
+              out="GUI-Setup-${VERSION}-linux-${{ matrix.goarch }}"
+              cp build/bin/GUI-Setup "dist/$out"
+              chmod +x "dist/$out"
+              ;;
+          esac
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GUI-Setup-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: 发 Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: 建 Release 并传产物
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          ls -l dist
+          gh release create "$TAG" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" \
+            --generate-notes

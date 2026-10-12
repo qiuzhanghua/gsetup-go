@@ -148,14 +148,20 @@ func Run(opt Options) Result {
 }
 
 // lineSink 把字节流切成一行一行往外送；pty 的 CRLF 在这里归一成 LF。
+//
+// 切行之前先剥掉控制序列（见 escape.go）：ConPTY 的会话握手、cmd.exe 的标题
+// OSC、清屏与光标这些都不是"内容"，而窗口那边只是把文本塞进 <pre>、不解释
+// ANSI —— 原样送过去，用户看到的就是一行乱码。剥在这里而不是前端：序列可能被
+// 多次 Read 切开，而且剥完事件里就只剩内容了（前端一行都不用改）。
 type lineSink struct {
 	stream string
 	buf    []byte
+	strip  stripper
 	emit   func(Event)
 }
 
 func (s *lineSink) Write(p []byte) (int, error) {
-	s.buf = append(s.buf, p...)
+	s.buf = append(s.buf, s.strip.strip(p)...)
 	for {
 		i := bytes.IndexByte(s.buf, '\n')
 		if i < 0 {

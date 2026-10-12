@@ -26,24 +26,57 @@ func TestArgsNoPathWhenUnchecked(t *testing.T) {
 	}
 }
 
+// 选入口：非 Windows 只有 .sh；Windows 上"有 PowerShell **且**包里有 .ps1"才走 .ps1，
+// 否则退回 .cmd（需求 §3.1 + 用户裁决：pwsh 7 > powershell 5.1 > cmd）。
+func TestPickEntry(t *testing.T) {
+	ps7 := Shells{Pwsh: `C:\Program Files\PowerShell\7\pwsh.exe`}
+	ps51 := Shells{Win: `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`}
+	cases := []struct {
+		goos   string
+		hasPS1 bool
+		shells Shells
+		want   string
+	}{
+		{"darwin", false, Shells{}, InstallSH},
+		{"linux", true, ps7, InstallSH},
+		{"windows", false, ps7, InstallCMD},     // 老包（gpm ≤ 0.6.5）里没有 .ps1
+		{"windows", true, Shells{}, InstallCMD}, // 机器上没有 PowerShell
+		{"windows", true, ps7, InstallPS1},
+		{"windows", true, ps51, InstallPS1},
+		{"windows", true, Shells{Pwsh: ps7.Pwsh, Win: ps51.Win}, InstallPS1},
+	}
+	for _, tc := range cases {
+		if e := PickEntry(tc.goos, tc.hasPS1, tc.shells); e.Name != tc.want {
+			t.Errorf("PickEntry(%s, hasPS1=%v) 选了 %s，想要 %s", tc.goos, tc.hasPS1, e.Name, tc.want)
+		}
+	}
+	if got := EntryNames("windows"); got != "install.cmd / install.ps1" {
+		t.Fatalf("EntryNames(windows) = %q", got)
+	}
+	if got := EntryNames("darwin"); got != "install.sh" {
+		t.Fatalf("EntryNames(darwin) = %q", got)
+	}
+}
+
 // 期望值写成目标平台的字符串，不用 filepath.Join —— 那是**宿主**的规矩，
 // 于是这些用例在 Windows 上跑就红了（实现本来就是按 goos 切的）。
-func TestScriptPerOS(t *testing.T) {
-	if got := Script("/pkg", "darwin"); got != "/pkg/install.sh" {
-		t.Fatalf("darwin 该走 install.sh，得到 %s", got)
+func TestEntryScriptPath(t *testing.T) {
+	if got := PickEntry("darwin", false, Shells{}).Script("/pkg", "darwin"); got != "/pkg/install.sh" {
+		t.Fatalf("darwin 该是 /pkg/install.sh，得到 %s", got)
 	}
-	if got := Script("/pkg", "linux"); got != "/pkg/install.sh" {
-		t.Fatalf("linux 该走 install.sh，得到 %s", got)
+	if got := PickEntry("windows", false, Shells{}).Script(`C:\pkg`, "windows"); got != `C:\pkg\install.cmd` {
+		t.Fatalf("windows 该是 C:\\pkg\\install.cmd，得到 %s", got)
 	}
-	if got := Script(`C:\pkg`, "windows"); got != `C:\pkg\install.cmd` {
-		t.Fatalf("windows 该走 install.cmd，得到 %s", got)
+	e := PickEntry("windows", true, Shells{Pwsh: "pwsh"})
+	if got := e.Script(`C:\pkg`, "windows"); got != `C:\pkg\install.ps1` {
+		t.Fatalf("有 PowerShell 且包里有 .ps1 时该是 C:\\pkg\\install.ps1，得到 %s", got)
 	}
 }
 
 // Windows 上多包一层 cmd /c，末尾塞 < NUL：install.cmd 有一句 pause。
 func TestArgvWindowsWrapsWithCmdAndNul(t *testing.T) {
 	c := Choice{Home: `C:\Users\me\cot`, Toolchain: "cot"}
-	prog, args := Argv(`C:\pkg`, c, "windows")
+	prog, args := Argv(`C:\pkg`, c, "windows", PickEntry("windows", false, Shells{}))
 	if prog != "cmd.exe" {
 		t.Fatalf("prog = %s，想要 cmd.exe", prog)
 	}
@@ -53,10 +86,31 @@ func TestArgvWindowsWrapsWithCmdAndNul(t *testing.T) {
 	}
 }
 
+// PowerShell 那条：解释器 + `-ExecutionPolicy Bypass` + `-File <脚本>` + 用户参数，
+// 而且**没有** `< NUL`（pause 只属于 install.cmd）。
+func TestArgvPowerShellEntry(t *testing.T) {
+	c := Choice{Home: `C:\Users\me\cot`, Toolchain: "cot", AddToPath: true}
+	prog, args := Argv(`C:\pkg`, c, "windows",
+		PickEntry("windows", true, Shells{Pwsh: `C:\Program Files\PowerShell\7\pwsh.exe`}))
+	if prog != `C:\Program Files\PowerShell\7\pwsh.exe` {
+		t.Fatalf("prog = %s", prog)
+	}
+	want := []string{"-NoProfile", "-ExecutionPolicy", "Bypass", "-File", `C:\pkg\install.ps1`,
+		"--dir", `C:\Users\me\cot`, "--with", "cot", "--yes"}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("args = %v，想要 %v", args, want)
+	}
+	for _, a := range args {
+		if a == "NUL" || a == "<" {
+			t.Fatalf("PowerShell 那条不该有 < NUL：%v", args)
+		}
+	}
+}
+
 // Unix 上直接 exec 脚本本身（install.sh 里自己会 cd 到包根）。
 func TestArgvUnixRunsScriptDirectly(t *testing.T) {
 	c := Choice{Home: "/tmp/home/cot", Toolchain: "cot"}
-	prog, args := Argv("/pkg", c, "darwin")
+	prog, args := Argv("/pkg", c, "darwin", PickEntry("darwin", false, Shells{}))
 	if prog != "/pkg/install.sh" {
 		t.Fatalf("prog = %s", prog)
 	}
@@ -73,7 +127,7 @@ func TestDisplayAbbreviatesHome(t *testing.T) {
 		t.Skip("没有家目录")
 	}
 	c := Choice{Home: filepath.Join(userHome, "cot"), Toolchain: "cot", AddToPath: true}
-	got := Display(userHome, c, "darwin")
+	got := Display(userHome, c, "darwin", PickEntry("darwin", false, Shells{}))
 	want := `./install.sh --dir "$HOME/cot" --with cot --yes`
 	if got != want {
 		t.Fatalf("Display() = %q，想要 %q", got, want)
@@ -82,8 +136,20 @@ func TestDisplayAbbreviatesHome(t *testing.T) {
 
 func TestDisplayWindows(t *testing.T) {
 	c := Choice{Home: `/tmp/other/cot`, Toolchain: "cot", AddToPath: true}
-	got := Display(`C:\pkg`, c, "windows")
+	got := Display(`C:\pkg`, c, "windows", PickEntry("windows", false, Shells{}))
 	want := `install.cmd --dir /tmp/other/cot --with cot --yes < NUL`
+	if got != want {
+		t.Fatalf("Display() = %q，想要 %q", got, want)
+	}
+}
+
+// PowerShell 那条要照实写全：只写 `.\install.ps1` 在默认策略下会被拒（实测），
+// 照抄的人会以为脚本坏了。
+func TestDisplayPowerShell(t *testing.T) {
+	c := Choice{Home: `/tmp/other/cot`, Toolchain: "cot", AddToPath: true}
+	e := PickEntry("windows", true, Shells{Win: `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`})
+	got := Display(`C:\pkg`, c, "windows", e)
+	want := `powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 --dir /tmp/other/cot --with cot --yes`
 	if got != want {
 		t.Fatalf("Display() = %q，想要 %q", got, want)
 	}

@@ -1,7 +1,7 @@
 # gsetup-go（GUI-Setup）
 
 给 gpm 分发包用的**图形安装器**：双击就能装，不用先进终端。它把界面上的选择（装哪一家
-工具链 cot / tdp、装到哪个家、要不要写 PATH）拼成一条 `install.sh` / `install.cmd` 命令，
+工具链 cot / tdp、装到哪个家、要不要写 PATH）拼成一条 `install.sh` / `install.cmd` / `install.ps1` 命令，
 **先在窗口里只读地给你看一遍**，再用 [portable-pty](https://github.com/qiuzhanghua/portable-pty)
 跑起来、实时显示输出（Unix 上 stderr 单独一根管道，是红字）。装完窗口自己停在"关闭"按钮上。
 
@@ -36,9 +36,9 @@ go test ./...                      # 五个内部包 + main 包
 
 | 位置 | 干什么 |
 | --- | --- |
-| `main.go` / `app.go` | Wails 的启动与绑定：把界面上选的东西（哪家工具链、装到哪个家、要不要写 PATH）拼成一条 `install.sh` / `install.cmd` 命令行 |
+| `main.go` / `app.go` | Wails 的启动与绑定：把界面上选的东西（哪家工具链、装到哪个家、要不要写 PATH）拼成一条 `install.sh` / `install.cmd` / `install.ps1` 命令行；Windows 上探一次 PowerShell（`pwsh` 7 优先），被策略拦就退回 `install.cmd` |
 | `internal/pkgroot/` | 从自己的可执行文件往上最多 8 层找"恰好一份" `<简称>-manifest.yaml`；认得出 App Translocation 与 Windows 压缩包预览那两种路径 |
-| `internal/wizard/` | 三平台的路径与命令拼接（`Sep` / `Join` / `Script` 都按**目标** goos 算，不按宿主） |
+| `internal/wizard/` | 三平台的路径与命令拼接（`Sep` / `Join` / `Entry.Script` 都按**目标** goos 算，不按宿主）；`PickEntry` 是"跑哪条入口"的唯一真相（Windows：`pwsh` 7 > `powershell.exe` 5.1 > `install.cmd`） |
 | `internal/runner/` | 用 portable-pty 跑那条命令、把输出实时送回窗口（Unix 上 stderr 单独一根管道） |
 | `internal/manifest/` `internal/ledger/` | 读清单、读账本（"这个家里装过什么"就靠它） |
 | `frontend/dist/` | **手写的**界面（`index.html` / `main.js` / `style.css`），不是构建产物 |
@@ -90,7 +90,8 @@ ai-desk 那边就是下这里的现成资产（按 `GSETUP_REF` 钉 tag 取对�
 `webkit2_41`）。这里**不**做六平台交叉编译 —— 那件事由 release.yml 的六条腿管。
 
 测试本身也按平台写：`#!/bin/sh` 那几条 pty 用例在 Windows 上跳过（那边跑的是
-`install.cmd` / `cmd.exe`），另有一条 Windows 专属用例真的起一个 `cmd.exe` 验退出码。
+`install.cmd` / `cmd.exe`），另有两条 Windows 专属用例：一条真起 `cmd.exe` 验退出码，一条真起
+PowerShell（`pwsh` 7 优先，其次 `powershell.exe`）跑 `install.ps1`，验参数原样转交与退出码。
 
 ## 找不着包的时候
 
@@ -111,19 +112,19 @@ macOS 上有个专门的坑：**App Translocation**。带 `com.apple.quarantine`
 Windows 上另有一个坑，而且更常见：**在压缩包预览里直接双击 `GUI-Setup.exe`**。资源管理器对
 压缩包只做单文件临时解压 —— 把这一个文件解到 `%TEMP%\Temp<N>_<包名>.zip\` 再启动，进程退出后
 连那份临时目录都一并清理，所以**用户根本看不到自己被解到哪儿去了**；它身边既没有清单也没有
-`install.cmd`，往上找同样是白找。v1.0.2 起认得出这种路径（`Temp<N>_….zip` 那一段），错误页会
+`install.cmd` / `install.ps1`，往上找同样是白找。v1.0.2 起认得出这种路径（`Temp<N>_….zip` 那一段），错误页会
 直接说：请右键那个 zip →「全部解压缩…」，在解出来的文件夹里再双击（那儿 `GUI-Setup.exe` 与
-`ad-manifest.yaml`、`install.cmd` 并排）。macOS 的 App Translocation 是**系统**干的，这一条是
+`ad-manifest.yaml`、`install.cmd` / `install.ps1` 并排）。macOS 的 App Translocation 是**系统**干的，这一条是
 **资源管理器**干的 —— 现象一样，责任方完全不同。
 
-直接跑 `./install.sh`（Windows：`install.cmd`）那条命令行路径一直不受影响。给自己调试用的
+直接跑 `./install.sh`（Windows：`install.cmd` 或 `install.ps1`）那条命令行路径一直不受影响。给自己调试用的
 后门是环境变量 `GSETUP_ROOT=<包根>`。
 
 ## 它怎么进到用户的包里
 
 它不落家、不进账本 —— 它是"安装过程"本身。gpm-go 的清单为此多了一段 `setup:`（与
 `entry:` 平行，但路径相对**包根**），`gpm pack --setup <路径>` 把这份 GUI-Setup 放在 zip
-**顶层**、与 `install.sh` 并排（gpm v0.6.4 = 设计文档 v3.13 的 D43、FR-32）。
+**顶层**、与三条入口脚本并排（gpm v0.6.4 = 设计文档 v3.13 的 D43、FR-32）。
 ai-desk 的 `tools/package.sh -s` 就是喂给它的那个参数；契约细节见 gpm-go 的
 [`docs/PACKAGE-FORMAT.md`](https://github.com/qiuzhanghua/gpm-go/blob/main/docs/PACKAGE-FORMAT.md)。
 

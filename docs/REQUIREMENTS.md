@@ -33,7 +33,9 @@ github.com/qiuzhanghua/gpm-go已经做好命令行安装GUI程序到Linux/Window
 1. go wails?
 ```
 
-原稿里 3.1 那条已经被讨论推翻（见 §8.2）：**不做 `install.ps1`**。
+原稿里 3.1 那条（"有 pwsh 7.x 或 powershell 就执行 install.ps1，否则 install.cmd"）一度被推翻
+（见 §8.2，理由：PowerShell 默认执行策略会拦脚本）。**v1.0.4 起又重新做了**：`gpm pack`
+（v0.6.6 起）同时生成 `install.sh` / `install.cmd` / `install.ps1` 三条入口，选择顺序与退路见 §4.4。
 
 ## 1. 定位与边界
 
@@ -160,16 +162,37 @@ gpm v3.12 起这两个脚本会把参数原样转交给 gpm（`"$@"` / `%*`，�
 因此 **ai-desk 的打包参数不改**，GUI-Setup **永远显式传 `--dir`**——按 Go flag"后出现者覆盖先出现者"，
 显式那个赢。
 
-### 4.4 Windows：`cmd /c install.cmd < NUL`
+### 4.4 Windows：优先 `install.ps1`，退回 `install.cmd`
 
-不写 `install.ps1`（用户裁决："不要 install.ps1"）。改用现成的 `install.cmd`，但注意它**末尾有一句 `pause`**
-（给双击的人看的"按任意键继续"）——GUI 调它会卡在等按键上。处理方式（用户选了 (c)）：
+**v1.0.4 起恢复了原稿 3.1 的意思**（用户裁决："现在命令行安装的只有 install.cmd for windows,
+install.sh for non-windows. 我还是要改设计，加 install.ps1"）：
+
+1. 这台机器上有 PowerShell（`pwsh` 7 优先，其次 `powershell.exe` 5.1）**且**包里确实有
+   `install.ps1` 时走那条：
+
+```
+pwsh -NoProfile -ExecutionPolicy Bypass -File install.ps1 --dir "C:\Users\me\cot" --with cot --yes
+```
+
+   `-ExecutionPolicy Bypass` **必须带**：从下载的 zip 里解出来的 `.ps1` 带着下载标记，
+   `RemoteSigned`（Windows 客户端的常见策略）会直接拒绝执行 —— 实测报"未进行数字签名…
+   无法在当前系统上运行此脚本"。这一条**不需要 `< NUL`**：PowerShell 脚本里没有 `pause`。
+
+2. 没有 PowerShell、或包里没有 `install.ps1`（老包：`gpm pack` 从 **v0.6.6** 起才有），
+   退回 `install.cmd`：
 
 ```
 cmd /c install.cmd --dir "%USERPROFILE%\cot" --with cot --yes < NUL
 ```
 
-`< NUL` 让 `pause` 立刻拿到 EOF 自己走完，既不改 `install.cmd`、也不改 gpm。
+   `< NUL` 让 `install.cmd` 末尾那句 `pause` 立刻拿到 EOF 自己走完，既不改 `install.cmd`、
+   也不改 gpm。
+
+3. 走 PowerShell 那条**被执行策略拦住时会自动退回 `install.cmd`**：认输出里的
+   `about_Execution_Policies` / "禁止运行脚本" / "未进行数字签名" 这类字样，退之前在面板里说明一句。
+
+"有哪几条入口、这次跑哪条"的真相只有一处：`wizard.PickEntry` —— 选择顺序、argv、给人照抄的
+那一行都在它那儿算，别在别处再写一遍。
 
 ### 4.5 portable-pty 是硬要求
 
@@ -253,8 +276,10 @@ OSC。换 shell 不解决问题：实测三种 shell 在同一个 pty 里头尾�
      而 gpm 的 `xattr -dr`（v3.10、D40）只在**安装时**清标记，救不了这一次。
      这是"给非开发人员双击装"最脆弱的一环；已裁决：**不改签名，就走方案 (i)**。
 
-2. **不做 `install.ps1`**（推翻原稿 3.1）：改走 `cmd /c install.cmd < NUL`。当初 gpm v3.5 特意选 `.cmd` 就是因为
-   PowerShell 默认 ExecutionPolicy 会拦脚本。
+2. **~~不做 `install.ps1`~~（v1.0.4 撤回）**：原裁决是改走 `cmd /c install.cmd < NUL`，理由是
+   PowerShell 默认 ExecutionPolicy 会拦脚本。那条理由实测成立（带下载标记的 `.ps1` 在
+   `RemoteSigned` 下直接被拒），但"会被拦"不等于"不能用"：把 `-ExecutionPolicy Bypass` 写进
+   调用方、并且在被拦时退回 `.cmd`，两边的好处都能拿到。现在三条入口并存，见 §4.4。
 3. **不做 `uninstall.sh`**（用户选 (a)）。
 4. **GUI-Setup 自己不装任何文件**，也不进 `payload/`、不装进家。
 5. **不做联网**：不下载、不检查更新、不回传（跟 gpm §0.5 的身份宣言一致）。

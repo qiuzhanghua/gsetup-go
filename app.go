@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -33,6 +34,7 @@ type App struct {
 	userHome string
 	goos     string
 	loadErr  string
+	shells   wizard.Shells // Windows 上探到的 PowerShell（pwsh 7 优先，其次 5.1）
 
 	// 这三个是给测试用的：真机上永远不设。
 	homeOverride string
@@ -44,8 +46,21 @@ type App struct {
 }
 
 // NewApp 建一个。
+//
+// Windows 上顺带探一次 PowerShell：入口优先跑 install.ps1（需求 §3.1），探不到就退回
+// install.cmd。探的是 PATH 上的 `pwsh`（7+）与 `powershell.exe`（5.1）—— 两条都不在时
+// 就别硬挑 .ps1，那条路只有在有解释器时才成立。
 func NewApp() *App {
-	return &App{goos: runtime.GOOS}
+	a := &App{goos: runtime.GOOS}
+	if a.goos == "windows" {
+		if p, err := exec.LookPath("pwsh"); err == nil {
+			a.shells.Pwsh = p
+		}
+		if p, err := exec.LookPath("powershell.exe"); err == nil {
+			a.shells.Win = p
+		}
+	}
+	return a
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -109,7 +124,7 @@ func rootHint(goos, exe string, err error) string {
 			"\n原始错误：" + err.Error()
 	}
 	return err.Error() + "。请把 GUI-Setup 放回解压出来的目录里再运行" +
-		"（那一层应该有 *-manifest.yaml 与 " + wizard.ScriptName(goos) + "），" +
+		"（那一层应该有 *-manifest.yaml 与 " + wizard.EntryNames(goos) + "），" +
 		"或者点下面的「自己选包目录」自己挑一下。"
 }
 
@@ -121,7 +136,7 @@ func (a *App) useRoot(dir string) error {
 	}
 	switch len(names) {
 	case 0:
-		return fmt.Errorf("%s 里没有 *-manifest.yaml —— 要选解压出来、和 %s 并排的那一层", dir, wizard.ScriptName(a.goos))
+		return fmt.Errorf("%s 里没有 *-manifest.yaml —— 要选解压出来、和 %s 并排的那一层", dir, wizard.EntryNames(a.goos))
 	case 1:
 	default:
 		return fmt.Errorf("%s 里有 %d 份清单（%s），说不清该用哪一份", dir, len(names), strings.Join(names, "、"))
@@ -157,7 +172,7 @@ func (a *App) PickRoot() State {
 // openDirectoryDialog 是正式实现；测试里换成 pickFolder 那个钩子。
 func (a *App) openDirectoryDialog(ctx context.Context) (string, error) {
 	return wailsruntime.OpenDirectoryDialog(ctx, wailsruntime.OpenDialogOptions{
-		Title:                "选解压出来的那个目录（里面应该有 *-manifest.yaml 与 " + wizard.ScriptName(a.goos) + "）",
+		Title:                "选解压出来的那个目录（里面应该有 *-manifest.yaml 与 " + wizard.EntryNames(a.goos) + "）",
 		DefaultDirectory:     a.defaultPickDir(),
 		CanCreateDirectories: false,
 	})
@@ -232,8 +247,9 @@ func (a *App) Bootstrap() State {
 		HasSetup:   a.man.SetupEntry(a.goos).Rel() != "",
 		Toolchains: wizard.Toolchains,
 	}
-	st.Script = wizard.Script(a.root, a.goos)
-	st.ScriptDisplay = wizard.ScriptName(a.goos)
+	e := a.entry()
+	st.Script = e.Script(a.root, a.goos)
+	st.ScriptDisplay = e.Name
 
 	def := a.man.DefaultToolchain()
 	st.DefaultToolchain = def
@@ -249,6 +265,12 @@ func (a *App) Bootstrap() State {
 		st.Installs = append(st.Installs, a.inspect(t))
 	}
 	return st
+}
+
+// entry 选这次用哪条入口脚本：Windows 上优先 install.ps1，但**包里得真有那一份** ——
+// 老包是 gpm ≤ 0.6.5 打的，里面只有 install.cmd。
+func (a *App) entry() wizard.Entry {
+	return wizard.PickEntry(a.goos, fileExists(filepath.Join(a.root, wizard.InstallPS1)), a.shells)
 }
 
 func (a *App) inspect(toolchain string) Installation {
@@ -310,17 +332,18 @@ func (a *App) Plan(toolchain, home string, addToPath bool) Plan {
 		return Plan{OK: false, Message: "安装路径要写绝对路径（比如 ~/cot），收到的是「" + home + "」"}
 	}
 	c := wizard.Choice{Home: home, Toolchain: toolchain, AddToPath: addToPath}
+	e := a.entry()
 	p := Plan{
 		OK:          true,
 		Toolchain:   toolchain,
 		Home:        home,
 		HomeDisplay: display(home, a.goos),
 		AddToPath:   addToPath,
-		Display:     wizard.Display(a.root, c, a.goos),
+		Display:     wizard.Display(a.root, c, a.goos, e),
 		Dir:         a.root,
-		Script:      wizard.Script(a.root, a.goos),
+		Script:      e.Script(a.root, a.goos),
 	}
-	p.Program, p.Args = wizard.Argv(a.root, c, a.goos)
+	p.Program, p.Args = wizard.Argv(a.root, c, a.goos, e)
 
 	if !fileExists(p.Script) {
 		p.OK = false
@@ -362,15 +385,73 @@ func (a *App) Start(toolchain, home string, addToPath bool) gsrunner.Result {
 		a.emit("output", gsrunner.Event{Stream: gsrunner.StreamSystem, Text: "注意：" + p.Warning})
 	}
 
+	// 边推给前端、边留一份给"要不要退回 install.cmd"这个判断用 —— Emit 是在 runner
+	// 的读 goroutine 里回调的，所以这份尾巴要上锁。
+	var mu sync.Mutex
+	var tail strings.Builder
 	res := gsrunner.Run(gsrunner.Options{
 		Dir:     p.Dir,
 		Command: p.Program,
 		Args:    p.Args,
 		Env:     a.envOverride,
-		Emit:    func(ev gsrunner.Event) { a.emit("output", ev) },
+		Emit: func(ev gsrunner.Event) {
+			mu.Lock()
+			if tail.Len() < 8192 {
+				tail.WriteString(ev.Text)
+				tail.WriteByte('\n')
+			}
+			mu.Unlock()
+			a.emit("output", ev)
+		},
 	})
+
+	// PowerShell 被执行策略拦住时退回 install.cmd（用户裁决：探测顺序 pwsh 7 >
+	// powershell 5.1 > cmd，被拦就退）。只在"这条入口本来是 .ps1"、输出里看得出是
+	// 策略问题、而且包里确实有 install.cmd 时才退。
+	if !res.Success && a.entry().Name == wizard.InstallPS1 {
+		mu.Lock()
+		seen := tail.String()
+		mu.Unlock()
+		if execPolicyRefused(seen) {
+			fallback := wizard.PickEntry(a.goos, false, a.shells)
+			if fileExists(fallback.Script(a.root, a.goos)) {
+				c := wizard.Choice{Home: p.Home, Toolchain: p.Toolchain, AddToPath: addToPath}
+				prog, args := wizard.Argv(a.root, c, a.goos, fallback)
+				a.emit("output", gsrunner.Event{Stream: gsrunner.StreamSystem,
+					Text: "PowerShell 被执行策略拦住了，改用 " + fallback.Name + " 重试："})
+				a.emit("output", gsrunner.Event{Stream: gsrunner.StreamSystem,
+					Text: "$ " + wizard.Display(a.root, c, a.goos, fallback)})
+				res = gsrunner.Run(gsrunner.Options{
+					Dir:     p.Dir,
+					Command: prog,
+					Args:    args,
+					Env:     a.envOverride,
+					Emit:    func(ev gsrunner.Event) { a.emit("output", ev) },
+				})
+			}
+		}
+	}
+
 	a.emit("done", map[string]any{"action": "install", "result": res, "message": res.Message()})
 	return res
+}
+
+// execPolicyRefused 认得出"PowerShell 被执行策略拦住了"这种失败。
+//
+// 实测（Windows 11）：从下载的 zip 里解出来的 .ps1 带着下载标记，`RemoteSigned` 会报
+// "未进行数字签名…无法在当前系统上运行此脚本"；`-ExecutionPolicy Restricted` 报
+// "此系统上已禁用脚本运行"。中英两种输出都认 —— 输出语言跟着系统走。
+func execPolicyRefused(out string) bool {
+	for _, s := range []string{
+		"about_Execution_Policies",
+		"禁止运行脚本", "已禁用脚本运行", "未进行数字签名",
+		"running scripts is disabled", "not digitally signed", "cannot be loaded because",
+	} {
+		if strings.Contains(out, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // Removal 是卸载清单里的一行：即将被回放删掉的东西。

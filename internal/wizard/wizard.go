@@ -65,49 +65,126 @@ func Join(goos string, parts ...string) string {
 	return strings.Join(parts, Sep(goos))
 }
 
-// ScriptName 是入口脚本的文件名。
-func ScriptName(goos string) string {
+// 入口脚本的文件名。三条并存（gpm v0.6.6 / 契约 v3.15、D44）：非 Windows 只有 .sh；
+// Windows 上有 .cmd（双击、以及执行策略禁脚本时的退路）与 .ps1（终端与 GUI 用）。
+const (
+	InstallSH  = "install.sh"
+	InstallCMD = "install.cmd"
+	InstallPS1 = "install.ps1"
+)
+
+// EntryNames 是"这个平台的包里该有哪几条入口"，给提示语用（用户会看到什么）。
+func EntryNames(goos string) string {
 	if goos == "windows" {
-		return "install.cmd"
+		return InstallCMD + " / " + InstallPS1
 	}
-	return "install.sh"
+	return InstallSH
 }
 
-// Script 是包根里那个入口脚本。
-func Script(root, goos string) string {
-	return Join(goos, root, ScriptName(goos))
+// Shells 是这台机器上有哪些 PowerShell（探测结果；测试里直接喂）。
+type Shells struct {
+	Pwsh string // pwsh（PowerShell 7+）的路径；没有则空
+	Win  string // powershell.exe（Windows PowerShell 5.1）的路径；没有则空
+}
+
+// pick 按用户裁决的顺序挑：pwsh 7 优先，其次 5.1。
+func (s Shells) pick() (string, bool) {
+	if s.Pwsh != "" {
+		return s.Pwsh, true
+	}
+	if s.Win != "" {
+		return s.Win, true
+	}
+	return "", false
+}
+
+// Entry 是这次要跑哪条入口脚本，以及怎么起它。
+type Entry struct {
+	Name    string   // install.sh / install.cmd / install.ps1
+	Display string   // 给人照抄那一行的开头（相对包根）
+	Shell   string   // 解释器可执行文件；空 = 直接 exec 脚本本身
+	Args    []string // 解释器自己的参数（脚本路径接在它们后面）
+	Tail    []string // 命令末尾固定要加的（cmd 需要 `< NUL`）
+}
+
+// PickEntry 按需求 §3.1 选入口：非 Windows 是 install.sh；Windows 上优先 install.ps1
+// （这台机器上有 PowerShell、且包里确实有那一份），否则退回 install.cmd。
+//
+// 为什么 hasPS1 要当入参：包不一定是新版 gpm 打的（v0.6.6 起才有 .ps1），老包里没有它
+// 就别硬挑 —— 挑一条不存在的脚本只会变成一句看不懂的报错。
+func PickEntry(goos string, hasPS1 bool, sh Shells) Entry {
+	if goos != "windows" {
+		return Entry{Name: InstallSH, Display: "./" + InstallSH}
+	}
+	if interp, ok := sh.pick(); ok && hasPS1 {
+		// 从下载的 zip 里解出来的 .ps1 带着下载标记（MOTW），RemoteSigned 会直接拒绝
+		// 执行 —— 所以必须显式给 Bypass，这也是文档里推荐用户照抄的那一条命令
+		// （实测：不加 Bypass 时报"未进行数字签名…无法在当前系统上运行此脚本"）。
+		return Entry{
+			Name:    InstallPS1,
+			Display: shellName(interp) + " -NoProfile -ExecutionPolicy Bypass -File " + InstallPS1,
+			Shell:   interp,
+			Args:    []string{"-NoProfile", "-ExecutionPolicy", "Bypass", "-File"},
+		}
+	}
+	// Windows 的退路（也是"双击就能跑"的那条）：末尾塞 `< NUL` 吃掉 install.cmd 的
+	// pause（给双击的人看的"按任意键继续"），不给 EOF 它会一直等下去（需求 §4.4）。
+	return Entry{
+		Name:    InstallCMD,
+		Display: InstallCMD,
+		Shell:   "cmd.exe",
+		Args:    []string{"/c"},
+		Tail:    []string{"<", "NUL"},
+	}
+}
+
+// Script 是包根里那条入口脚本的完整路径。
+func (e Entry) Script(root, goos string) string {
+	return Join(goos, root, e.Name)
 }
 
 // Argv 是真正 exec 的 program + args。
 //
-// Windows 上多包一层 cmd /c，并在末尾塞 `< NUL`：install.cmd 末尾有一句
-// pause（给双击的人看的"按任意键继续"），不给 EOF 它会一直等下去
-// （需求 §4.4）。cmd.exe 会自己把 `< NUL` 当成重定向解析。
-func Argv(root string, c Choice, goos string) (string, []string) {
-	script := Script(root, goos)
-	if goos == "windows" {
-		args := append([]string{"/c", script}, c.Args()...)
-		return "cmd.exe", append(args, "<", "NUL")
+// 三条入口的差别只在这里：`.sh` 直接 exec 自己（脚本里自己会 cd），`.cmd` 多包一层
+// `cmd /c` 并吃掉 pause，`.ps1` 用 PowerShell 起、带 `-ExecutionPolicy Bypass`。
+func Argv(root string, c Choice, goos string, e Entry) (string, []string) {
+	script := e.Script(root, goos)
+	if e.Shell == "" {
+		return script, c.Args()
 	}
-	return script, c.Args()
+	args := append([]string{}, e.Args...)
+	args = append(args, script)
+	args = append(args, c.Args()...)
+	return e.Shell, append(args, e.Tail...)
 }
 
 // Display 是给人照抄的那一行（相对包根，和需求里的例子一个样子）。
-func Display(root string, c Choice, goos string) string {
+//
+// PowerShell 那条**照实写全**（`pwsh -NoProfile -ExecutionPolicy Bypass -File …`）：
+// 只写 `.\install.ps1` 在默认策略下会被拒（同一台机器上实测过），照抄的人会以为脚本坏了。
+func Display(root string, c Choice, goos string, e Entry) string {
 	var b strings.Builder
-	if goos == "windows" {
-		b.WriteString("install.cmd")
-	} else {
-		b.WriteString("./install.sh")
-	}
+	b.WriteString(e.Display)
 	for _, a := range c.Args() {
 		b.WriteString(" ")
 		b.WriteString(quoteArg(a, c, goos))
 	}
-	if goos == "windows" {
-		b.WriteString(" < NUL")
+	for _, t := range e.Tail {
+		b.WriteString(" " + t)
 	}
 	return b.String()
+}
+
+// shellName 把解释器的路径缩成命令名（`C:\Program Files\PowerShell\7\pwsh.exe` → `pwsh`）。
+//
+// 不用 filepath.Base：那是跑这个程序的机器的规矩，而这些路径可能来自另一个平台
+// （测试里就会这样喂进来）。
+func shellName(p string) string {
+	s := strings.ReplaceAll(p, `\`, "/")
+	if i := strings.LastIndex(s, "/"); i >= 0 {
+		s = s[i+1:]
+	}
+	return strings.TrimSuffix(s, ".exe")
 }
 
 // quoteArg 让照抄的那一行在终端里真的能跑：家目录缩成 $HOME / %USERPROFILE%

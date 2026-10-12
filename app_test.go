@@ -703,3 +703,74 @@ func TestStartWindowsRunsCmd(t *testing.T) {
 		t.Fatalf("install.cmd 该收到 --dir %s，pty 里只看到 %q", home, lines)
 	}
 }
+
+// Windows 上"有 PowerShell、且包里确实有 install.ps1"时走的那条路（用户裁决：
+// pwsh 7 > powershell 5.1 > install.cmd）：真拿 PowerShell 起脚本、参数照传、
+// 退出码照传回来。这条要一个真的 PowerShell —— CI 的 windows 腿上有。
+func TestStartWindowsRunsInstallPS1(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("只在 Windows 上跑（要真的 PowerShell）")
+	}
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "ad-manifest.yaml"), manifestYAML, 0o644)
+	write(t, filepath.Join(dir, "install.ps1"),
+		"foreach ($a in $args) { Write-Host \"arg=<$a>\" }\nexit 7\n", 0o644)
+	if err := os.MkdirAll(filepath.Join(dir, "payload", "AI Desk.app", "Contents", "MacOS"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a := NewApp() // 真探测一次 pwsh / powershell.exe
+	if a.shells.Pwsh == "" && a.shells.Win == "" {
+		t.Skip("这台机器没有 PowerShell")
+	}
+	home := t.TempDir()
+	t.Setenv(pkgroot.EnvOverride, dir)
+	a.homeOverride = home
+	requirePty(t)
+
+	p := a.Plan("cot", "", false)
+	if !p.OK || !strings.HasSuffix(p.Script, "install.ps1") {
+		t.Fatalf("该挑 install.ps1，得到 %+v", p)
+	}
+	if !strings.Contains(p.Display, "-ExecutionPolicy Bypass") {
+		t.Fatalf("给人照抄的那一行该带 -ExecutionPolicy Bypass：%q", p.Display)
+	}
+
+	c := &collector{}
+	a.emitHook = c.hook
+	res := a.Start("cot", "", false)
+	lines := append(c.text(gsrunner.StreamStdout), c.text(gsrunner.StreamStderr)...)
+	joined := strings.Join(lines, "\n")
+	for _, want := range []string{"arg=<--dir>", "arg=<" + p.Home + ">", "arg=<--with>", "arg=<cot>", "arg=<--no-path>"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("脚本没收到 %q：\n%s", want, joined)
+		}
+	}
+	if res.Code != 7 {
+		t.Fatalf("退出码该原样传回来（7），得到 %+v\n%s", res, joined)
+	}
+}
+
+// 被策略拦住时要认得出这种失败（真正的"退回 install.cmd"动作在 Start 里，
+// 正常路径由上面那条真 PowerShell 用例覆盖）。中英两种输出都算 —— 输出语言跟着系统走。
+func TestExecPolicyRefused(t *testing.T) {
+	yes := []string{
+		"SecurityError: 无法加载文件 C:\\pkg\\install.ps1，因为此系统上已禁用脚本运行。有关详细信息，请参阅 https://go.microsoft.com/fwlink/?LinkID=135170 处的 about_Execution_Policies。",
+		"文件 C:\\pkg\\install.ps1 未进行数字签名。无法在当前系统上运行此脚本。",
+		"File C:\\pkg\\install.ps1 cannot be loaded because running scripts is disabled on this system.",
+		"File C:\\pkg\\install.ps1 is not digitally signed.",
+	}
+	for _, s := range yes {
+		if !execPolicyRefused(s) {
+			t.Errorf("该认出来：%q", s)
+		}
+	}
+	for _, s := range []string{
+		"",
+		"gpm: mkdir C:\\x: The system cannot find the path specified.",
+		"AI Desk 0.3.7 装好了。",
+	} {
+		if execPolicyRefused(s) {
+			t.Errorf("不该认成策略问题：%q", s)
+		}
+	}
+}

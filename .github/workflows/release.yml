@@ -45,7 +45,7 @@ jobs:
 
       # 徽标 / 关于里的版本号来自 wails.json 的 info.productVersion（Wails 会把它
       # 写进 Info.plist 与 Windows 资源）。发版的规矩：先把这个号抬好、提交，再打
-      # tag。这里对一下，免得发出一个 tag 说 v1.1.0、程序却自报 1.0.0 的包。
+      # tag。这里对一下，免得发出一个 tag 说 v1.2.0、程序却自报 1.1.0 的包。
       - name: 算出版本号，并核对 wails.json
         id: ver
         shell: bash

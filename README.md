@@ -59,9 +59,9 @@ GSETUP_E2E_PKG=/tmp/fwd/pk go test -count=1 -run TestEndToEndRealPackage -v .
 ```sh
 # 1. 先把版本号抬上去：wails.json 的 info.productVersion —— 徽标 / 关于里显示的就是它
 # 2. 提交，再打带注释的 tag，两个远端都推
-git tag -a v1.1.0 -m "GUI-Setup v1.1.0：……"
-git push gh main v1.1.0        # GitHub：CI 与 Release 都在这儿
-git push gitee main v1.1.0     # Gitee：镜像，同样推 main 与 tag
+git tag -a v1.2.0 -m "GUI-Setup v1.2.0：界面 B 的缺省工具链从 cot 改成 tdp"
+git push gh main v1.2.0        # GitHub：CI 与 Release 都在这儿
+git push gitee main v1.2.0     # Gitee：镜像，同样推 main 与 tag
 ```
 
 （远端：`gh` = GitHub，`gitee` = Gitee 镜像；CI 与发 Release 都在 GitHub，但两边都推。）

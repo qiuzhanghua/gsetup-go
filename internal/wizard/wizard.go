@@ -24,6 +24,27 @@ func KnownToolchain(name string) bool {
 	return false
 }
 
+// PreferredToolchain 是界面 B 单选组的缺省选中项。
+//
+// 需求 §3.2.1 的原话是「用户选择 cot/tdp，缺省是 tdp」——所以缺省**不是**清单
+// requires 的第一家：那一条是账本探测与「没写家时兜底」的规矩（§9-1）。
+const PreferredToolchain = "tdp"
+
+// DefaultChoice 从清单提供的那几家里挑界面 B 的缺省项：有 tdp 就选它，否则退回
+// 第一家。缺省必须落在 requires 里 —— 用户不动它时 --with 拿的就是这个名字，
+// 挑一个这家包里没有的工具链，gpm 那边只会报错。
+func DefaultChoice(offered []string) string {
+	for _, t := range offered {
+		if t == PreferredToolchain {
+			return t
+		}
+	}
+	if len(offered) > 0 {
+		return offered[0]
+	}
+	return ""
+}
+
 // Choice 是界面 B 上用户选完的那几件事。
 type Choice struct {
 	Home      string // 装到哪儿（绝对路径）

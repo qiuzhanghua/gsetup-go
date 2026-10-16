@@ -251,7 +251,9 @@ func (a *App) Bootstrap() State {
 	st.Script = e.Script(a.root, a.goos)
 	st.ScriptDisplay = e.Name
 
-	def := a.man.DefaultToolchain()
+	// 界面 B 单选组的缺省项走 wizard.DefaultChoice（需求 §3.2.1：缺省 tdp），
+	// 不是清单 requires 的第一家 —— 那一条留给账本探测与没写家时的兜底（§9-1）。
+	def := wizard.DefaultChoice(a.man.Toolchains())
 	st.DefaultToolchain = def
 	st.DefaultHome = wizard.DefaultHome(a.userHome, def)
 

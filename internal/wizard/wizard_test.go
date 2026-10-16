@@ -191,6 +191,24 @@ func TestDefaultHome(t *testing.T) {
 	}
 }
 
+func TestDefaultChoice(t *testing.T) {
+	cases := []struct {
+		offered []string
+		want    string
+	}{
+		{[]string{"cot", "tdp"}, "tdp"}, // 需求 §3.2.1：缺省 tdp，不是 requires 的第一家
+		{[]string{"tdp", "cot"}, "tdp"},
+		{[]string{"cot"}, "cot"}, // 只带 cot 的老包：缺省必须落在 requires 里
+		{[]string{"tdp"}, "tdp"},
+		{nil, ""},
+	}
+	for _, c := range cases {
+		if got := DefaultChoice(c.offered); got != c.want {
+			t.Fatalf("DefaultChoice(%v) = %q，想要 %q", c.offered, got, c.want)
+		}
+	}
+}
+
 func TestUninstall(t *testing.T) {
 	prog, args := UninstallArgv("/tmp/home/cot", "ai-desk", "darwin")
 	if prog != "/tmp/home/cot/bin/gpm" {

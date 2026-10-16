@@ -49,7 +49,7 @@ func TestEndToEndRealPackage(t *testing.T) {
 	if !st.OK {
 		t.Fatalf("认不出这个包：%s", st.Message)
 	}
-	if st.ID != "ai-desk" || st.DefaultToolchain != "cot" {
+	if st.ID != "ai-desk" || st.DefaultToolchain != "tdp" {
 		t.Fatalf("清单读得不对：%+v", st)
 	}
 

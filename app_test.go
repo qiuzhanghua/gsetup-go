@@ -152,11 +152,11 @@ func TestBootstrapReadsPackage(t *testing.T) {
 	if st.Script != pkg+"/install.sh" {
 		t.Fatalf("Script = %s", st.Script)
 	}
-	if st.DefaultToolchain != "cot" {
-		t.Fatalf("缺省工具链该是 requires 里的第一个，得到 %s", st.DefaultToolchain)
+	if st.DefaultToolchain != "tdp" {
+		t.Fatalf("缺省工具链该是 tdp（需求 §3.2.1），得到 %s", st.DefaultToolchain)
 	}
-	if st.DefaultHome != filepath.Join(home, "cot") {
-		t.Fatalf("缺省安装路径该是 ~/cot，得到 %s", st.DefaultHome)
+	if st.DefaultHome != filepath.Join(home, "tdp") {
+		t.Fatalf("缺省安装路径该是 ~/tdp，得到 %s", st.DefaultHome)
 	}
 	if len(st.Installs) != 2 {
 		t.Fatalf("两个家都该列出来，得到 %+v", st.Installs)
@@ -249,7 +249,7 @@ func TestPickRootAdoptsTheChosenDirectory(t *testing.T) {
 	if st.Short != "ad" || st.Name != "AI Desk" {
 		t.Fatalf("清单该读出来了：%+v", st)
 	}
-	if st.DefaultHome != filepath.Join(home, "cot") {
+	if st.DefaultHome != filepath.Join(home, "tdp") {
 		t.Fatalf("DefaultHome = %s", st.DefaultHome)
 	}
 	if p := a.Plan("cot", "", false); !p.OK {

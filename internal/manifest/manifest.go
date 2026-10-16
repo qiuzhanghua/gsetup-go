@@ -103,7 +103,9 @@ func (m *Manifest) Toolchains() []string {
 	return out
 }
 
-// DefaultToolchain 是界面 B 的缺省选项：requires 里第一个认识的工具链。
+// DefaultToolchain 是「缺省家」的那一家：账本探测与没写家时的兜底都按 requires
+// 里第一个认识的工具链（需求 §9-1）。界面 B 单选组的缺省项是另一回事 ——
+// 见 wizard.DefaultChoice（§3.2.1：缺省 tdp）。
 func (m *Manifest) DefaultToolchain() string {
 	if ts := m.Toolchains(); len(ts) > 0 {
 		return ts[0]

@@ -25,11 +25,39 @@ sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev    # Ubuntu 24.04 起
 wails build -clean -tags webkit2_41                           # 4.0 那一支在新镜像上已经没有了
 ```
 
+**绕开 `wails` 直接 `go build` 时必须自己带 `production`**：wails 内部固定会加这个 tag
+（`cmd/wails/flags/build.go` 的 `GetBuildMode`，除非显式 `-debug`），而 `internal/app/app_default_unix.go`
+的构建约束是 `!dev && !production && !bindings` —— 缺了 `production` 编出来的是个**桩**，
+一跑就打印 `Wails applications will not build without the correct build tags.` 并退出。所以是：
+
+```sh
+go build -tags "production webkit2_41" -o build/bin/GUI-Setup .
+```
+
+同一个道理让 `go vet ./...` / `go test ./...` 在 Linux 上**绿得没有意义**：不带 `production` 时
+`internal/frontend/desktop` 下面那两个包根本不会被编（`go list -deps .` 里 0 命中），
+`webkit2gtk-4.0` 那个 pkg-config 报错自然也就碰不到。要真正编到 webview 那一层：
+
+```sh
+go vet  -tags "production webkit2_41" ./...
+go test -tags "production webkit2_41" ./...
+```
+
+（CI 里只给了 `webkit2_41`，所以本仓的 vet/test 不覆盖 webview 那一层；真正演练系统依赖的是
+release.yml 的 `wails build`。）
+
 ## 开发与测试
 
 ```sh
 go vet ./...
 go test ./...                      # 五个内部包 + main 包
+```
+
+Linux 上想连 webview 那一层一起编（见上面「Linux 上窗口起不来」那段），两条都要带 tag：
+
+```sh
+go vet  -tags "production webkit2_41" ./...
+go test -tags "production webkit2_41" ./...
 ```
 
 代码结构：

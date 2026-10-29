@@ -208,3 +208,49 @@ ul.removal li .kind {
 ul.removal li .path { flex: 1; word-break: break-all; }
 ul.removal li.gone .path { color: var(--muted); text-decoration: line-through; }
 ul.removal li .note { color: var(--muted); font-size: 11.5px; }
+
+/* 运行中 / 完成后的折叠设置：把日志区撑满剩余高度。 */
+.settings-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-summary #summary-text {
+  flex: 1;
+  font-size: 13px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+body.run-ok #summary-text { color: var(--ok); }
+body.run-fail #summary-text { color: var(--danger); font-weight: 600; }
+
+body.settings-collapsed #app {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+
+body.settings-collapsed #output-box {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 0;
+}
+
+body.settings-collapsed #output-box pre.output {
+  flex: 1;
+  max-height: none;
+}
+
+/* 跑的时候 A 区（已安装列表）和卸载确认都没有用，藏掉给日志腾地方。 */
+body.in-progress #installed-box,
+body.in-progress #removal-box {
+  display: none !important;
+}
+
+/* 跑的时候这个按钮没有意义，藏掉给状态栏留白。 */
+body.in-progress #start-button { display: none; }

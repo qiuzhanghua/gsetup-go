@@ -39,6 +39,11 @@
     </section>
 
     <section id="choose-box" class="card hidden">
+      <div id="settings-summary" class="settings-summary hidden">
+        <span id="summary-text" aria-live="polite"></span>
+        <button id="settings-toggle" class="ghost tiny" aria-expanded="false" aria-controls="choose-body">展开</button>
+      </div>
+      <div id="choose-body">
       <h2>要装到哪儿</h2>
 
       <div class="field">
@@ -59,6 +64,7 @@
           让终端里也能直接用 <code id="cmd-name">ad</code> 命令
         </label>
         <p class="muted small">勾上就是 <code>--yes</code>（会改 shell 配置；Windows 是注册表里的 <code>Path</code>）；不勾就是 <code>--no-path</code>。</p>
+      </div>
       </div>
     </section>
 

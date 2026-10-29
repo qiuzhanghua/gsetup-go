@@ -21,12 +21,68 @@ let outputEl = null;
 let running = false;
 let pendingRemoval = null;
 
+// —— 运行中折叠设置：让日志区撑满剩余高度 ——
+let settingsCollapsed = false;
+let runSummary = "";
+
+function settingsInputs() {
+  return document.querySelectorAll('input[name="toolchain"], #home, #add-to-path');
+}
+
+function setSettingsDisabled(disabled) {
+  settingsInputs().forEach((el) => {
+    el.disabled = disabled;
+  });
+}
+
+function summarizeChoice(c) {
+  const home = plan && plan.ok ? plan.homeDisplay : c.home;
+  return `${c.toolchain} · ${home} · ${c.addToPath ? "写入 PATH" : "不写 PATH"}`;
+}
+
+function collapseSettings(summary) {
+  runSummary = summary;
+  settingsCollapsed = true;
+  document.body.classList.add("settings-collapsed");
+  $("settings-summary").classList.remove("hidden");
+  $("choose-body").classList.add("hidden");
+  $("summary-text").textContent = summary;
+  $("settings-toggle").textContent = "展开";
+  $("settings-toggle").setAttribute("aria-expanded", "false");
+}
+
+function expandSettings() {
+  settingsCollapsed = false;
+  document.body.classList.remove("settings-collapsed");
+  $("choose-body").classList.remove("hidden");
+  $("settings-toggle").textContent = "收起";
+  $("settings-toggle").setAttribute("aria-expanded", "true");
+}
+
+function resetSettingsView() {
+  settingsCollapsed = false;
+  runSummary = "";
+  document.body.classList.remove("settings-collapsed", "in-progress", "run-ok", "run-fail");
+  $("settings-summary").classList.add("hidden");
+  $("choose-body").classList.remove("hidden");
+  setSettingsDisabled(false);
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
   $("close-button").addEventListener("click", () => {
     call("Quit");
   });
   $("pick-root").addEventListener("click", pickRoot);
   $("start-button").addEventListener("click", start);
+  $("settings-toggle").addEventListener("click", () => {
+    if (settingsCollapsed) {
+      expandSettings();
+    } else {
+      collapseSettings(runSummary || "设置已折叠");
+    }
+    // 运行中展开只是看一眼，输入保持只读。
+    if (running) setSettingsDisabled(true);
+  });
   $("remove-confirm").addEventListener("click", confirmRemoval);
   $("remove-cancel").addEventListener("click", cancelRemoval);
   $("home").addEventListener("input", refresh);
@@ -52,6 +108,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 });
 
 function showFatal(message) {
+  resetSettingsView();
   $("error-message").textContent = message;
   $("error-box").classList.remove("hidden");
   $("choose-box").classList.add("hidden");
@@ -82,6 +139,7 @@ async function pickRoot() {
 }
 
 function renderShell() {
+  resetSettingsView();
   $("title").textContent = `${state.name} ${state.version} 安装向导`;
   $("subtitle").textContent =
     `包根：${state.root}　·　简称：${state.short}　·　平台：${state.goos}`;
@@ -245,6 +303,10 @@ async function start() {
   running = true;
   pendingRemoval = null;
   $("removal-box").classList.add("hidden");
+  collapseSettings(summarizeChoice(c));
+  document.body.classList.remove("run-ok", "run-fail");
+  document.body.classList.add("in-progress");
+  setSettingsDisabled(true);
   $("output-box").classList.remove("hidden");
   outputEl.innerHTML = "";
   $("start-button").disabled = true;
@@ -329,6 +391,12 @@ function cancelRemoval() {
 async function confirmRemoval() {
   if (running || !pendingRemoval) return;
   const home = pendingRemoval.home;
+  collapseSettings(
+    `卸载 ${pendingRemoval.name} ${pendingRemoval.version} · ${pendingRemoval.homeDisplay}`,
+  );
+  document.body.classList.remove("run-ok", "run-fail");
+  document.body.classList.add("in-progress");
+  setSettingsDisabled(true);
   pendingRemoval = null;
   $("removal-box").classList.add("hidden");
   $("remove-confirm").disabled = true;
@@ -357,7 +425,15 @@ function onOutput(ev) {
 
 function onDone(payload) {
   running = false;
+  document.body.classList.remove("in-progress");
+  setSettingsDisabled(false);
+  const ok = !!(payload && payload.result && payload.result.success);
+  document.body.classList.toggle("run-ok", ok);
+  document.body.classList.toggle("run-fail", !ok);
   const message = (payload && payload.message) || "结束";
+  const summary = `${ok ? "✓" : "✗"} ${message}`;
+  runSummary = summary;
+  $("summary-text").textContent = summary;
   appendLine({
     stream: payload && payload.result && payload.result.success ? "ok" : "bad",
     text: "—— " + message + " ——",

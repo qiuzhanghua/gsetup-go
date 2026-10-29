@@ -169,6 +169,30 @@ func TestBootstrapReadsPackage(t *testing.T) {
 }
 
 // 找不到包根时那一句话要能让人知道怎么办。
+func TestBootstrapWithoutRequiresFallsBackToPreferredToolchain(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "ad-manifest.yaml"), `id: ai-desk
+name: AI Desk
+version: 0.3.1
+entry:
+  darwin: { bundle: "AI Desk.app" }
+launch:
+  cmd: ad
+`, 0o644)
+	a, home := newTestApp(t, dir)
+
+	st := a.Bootstrap()
+	if !st.OK {
+		t.Fatalf("该认得出这个包：%s", st.Message)
+	}
+	if st.DefaultToolchain != "tdp" {
+		t.Fatalf("清单没写 requires 时缺省工具链该回退到 tdp，得到 %q", st.DefaultToolchain)
+	}
+	if st.DefaultHome != filepath.Join(home, "tdp") {
+		t.Fatalf("DefaultHome = %s，想要 %s", st.DefaultHome, filepath.Join(home, "tdp"))
+	}
+}
+
 func TestBootstrapWithoutPackage(t *testing.T) {
 	a, _ := newTestApp(t, t.TempDir())
 	st := a.Bootstrap()

@@ -258,7 +258,13 @@ func (a *App) Bootstrap() State {
 
 	// 界面 B 单选组的缺省项走 wizard.DefaultChoice（需求 §3.2.1：缺省 tdp），
 	// 不是清单 requires 的第一家 —— 那一条留给账本探测与没写家时的兜底（§9-1）。
-	def := wizard.DefaultChoice(a.man.Toolchains())
+	// 老包/手写清单可能没写 requires；这时按“不限制”处理成标准两家，否则单选框
+	// 全空，Plan 收到空字符串只能报“工具链只认 cot 或 tdp”。
+	offered := a.man.Toolchains()
+	if len(offered) == 0 {
+		offered = wizard.Toolchains
+	}
+	def := wizard.DefaultChoice(offered)
 	st.DefaultToolchain = def
 	st.DefaultHome = wizard.DefaultHome(a.userHome, def)
 

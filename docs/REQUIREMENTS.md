@@ -359,5 +359,9 @@ webview 依赖在 Windows / macOS 上由系统兜底，只有 Linux 需要用户
 **已定（用户，2026-10-10）：Wails v2**（稳定线，不用 v3 beta）。接受它带来的 webview 依赖；
 Linux 上缺 WebKitGTK 时窗口起不来的情况，在 README 里给一行装包提示。
 
+**后续（2026-10-29）**：Wails v3.0.0 已正式发布，本项目已从 v2.16.0 迁到 v3.0.0。
+Linux 默认构建走 GTK4/webkitgtk-6.0，另提供 GTK3/webkit2gtk-4.1 构建供只有 4.1
+的发行版使用（构建方式与沙箱处理见 README 与 `webkit_sandbox.go`）。
+
 **另一个前置条件**：签名 + 公证（§8.1 与 9-8）。不签的话，"双击就装"在 macOS 上第一步就被拦；
 签了才谈得上"非开发人员无障碍"。这两件事最好一起定。

@@ -1,13 +1,13 @@
 [Desktop Entry]
 Version=1.0
-Name=My Product
-Comment=A gsetup-ref application
+Name=GUI-Setup
+Comment=给 gpm 打包出来的 GUI 应用配的图形安装向导
 # The Exec line includes %u to pass the URL to the application
-Exec=/usr/local/bin/gsetup-ref %u
+Exec=/usr/local/bin/GUI-Setup %u
 Terminal=false
 Type=Application
-Icon=gsetup-ref
+Icon=GUI-Setup
 Categories=Utility;
-StartupWMClass=gsetup-ref
+StartupWMClass=GUI-Setup
 
  

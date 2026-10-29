@@ -1,15 +1,15 @@
 {
 	"fixed": {
-		"file_version": "0.1.0"
+		"file_version": "2.0.1"
 	},
 	"info": {
 		"0409": {
-			"ProductVersion": "0.1.0",
-			"CompanyName": "My Company",
-			"FileDescription": "A gsetup-ref application",
-			"LegalCopyright": "© 2026, My Company",
-			"ProductName": "My Product",
-			"Comments": "This is a comment"
+			"ProductVersion": "2.0.1",
+			"CompanyName": "qiuzhanghua",
+			"FileDescription": "给 gpm 打包出来的 GUI 应用配的图形安装向导",
+			"LegalCopyright": "(c) 2025, My Company",
+			"ProductName": "GUI-Setup",
+			"Comments": "GUI-Setup"
 		}
 	}
 }

@@ -3,26 +3,26 @@
 #
 # The lines below are called `modelines`. See `:help modeline`
 
-name: "gsetup-ref"
+name: "GUI-Setup"
 arch: ${GOARCH}
 platform: "linux"
-version: "0.1.0"
+version: "2.0.1"
 section: "default"
 priority: "extra"
 maintainer: ${GIT_COMMITTER_NAME} <${GIT_COMMITTER_EMAIL}>
-description: "A gsetup-ref application"
-vendor: "My Company"
+description: "给 gpm 打包出来的 GUI 应用配的图形安装向导"
+vendor: "qiuzhanghua"
 homepage: "https://wails.io"
 license: "MIT"
 release: "1"
 
 contents:
-  - src: "./bin/gsetup-ref"
-    dst: "/usr/local/bin/gsetup-ref"
+  - src: "./bin/GUI-Setup"
+    dst: "/usr/local/bin/GUI-Setup"
   - src: "./build/appicon.png"
-    dst: "/usr/share/icons/hicolor/128x128/apps/gsetup-ref.png"
-  - src: "./build/linux/gsetup-ref.desktop"
-    dst: "/usr/share/applications/gsetup-ref.desktop"
+    dst: "/usr/share/icons/hicolor/128x128/apps/GUI-Setup.png"
+  - src: "./build/linux/GUI-Setup.desktop"
+    dst: "/usr/share/applications/GUI-Setup.desktop"
 
 # Default dependencies for the GTK4 + WebKitGTK 6.0 stack (Ubuntu 24.04+ / Debian 13+)
 depends:

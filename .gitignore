@@ -33,8 +33,14 @@ go.work.sum
 # .vscode/
 
 # 本项目自己的构建产物与测试分发包
-/build/
 /dist/
+/.task/
+
+# Wails v3 生成物（由 build/appicon.png 生成）
+build/darwin/icons.icns
+build/windows/icon.ico
+build/linux/GUI-Setup.desktop
+build/linux/appimage/
 
 # General
 .DS_Store
@@ -42,7 +48,8 @@ go.work.sum
 __MACOSX/
 .AppleDouble
 .LSOverride
-Icon[]
+Icon[
+]
 
 # Resource forks
 ._*
@@ -63,7 +70,8 @@ Icon[]
 .file
 .disk_label*
 lost+found
-.HFS+ Private Directory Data[]
+.HFS+ Private Directory Data[
+]
 
 # Directories potentially created on remote AFP share
 .AppleDB
@@ -93,3 +101,6 @@ Backups.backupdb
 .MobileBackups.trash
 MobileBackups.trash
 tmbootpicker.efi
+
+# Wails v3 build output
+/bin/

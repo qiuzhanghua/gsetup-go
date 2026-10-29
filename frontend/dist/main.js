@@ -6,7 +6,14 @@
 //
 // 这里不做任何判断：参数怎么拼、能不能卸，全是 Go 那边算好的。
 
+import { Call, Events } from "/wails/runtime.js";
+
 const $ = (id) => document.getElementById(id);
+
+// v3 的服务绑定：window.go 已经没有了，用 Call.ByName。
+function call(name, ...args) {
+  return Call.ByName(`main.App.${name}`, ...args);
+}
 
 let state = null;
 let plan = null;
@@ -16,7 +23,7 @@ let pendingRemoval = null;
 
 document.addEventListener("DOMContentLoaded", async () => {
   $("close-button").addEventListener("click", () => {
-    if (window.go && window.go.main) window.go.main.App.Quit();
+    call("Quit");
   });
   $("pick-root").addEventListener("click", pickRoot);
   $("start-button").addEventListener("click", start);
@@ -26,17 +33,12 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("add-to-path").addEventListener("change", refresh);
   outputEl = $("output");
 
-  const rt = await waitForRuntime();
-  if (!rt) {
-    showFatal("界面和 Go 那边还没接上（window.go 没出现）。");
-    return;
-  }
-  window.runtime.EventsOn("output", onOutput);
-  window.runtime.EventsOn("start", () => setStatus("正在跑…"));
-  window.runtime.EventsOn("done", onDone);
+  Events.On("output", (ev) => onOutput(ev.data));
+  Events.On("start", () => setStatus("正在跑…"));
+  Events.On("done", (ev) => onDone(ev.data));
 
   try {
-    state = await window.go.main.App.Bootstrap();
+    state = await call("Bootstrap");
   } catch (err) {
     showFatal(String(err));
     return;
@@ -48,14 +50,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   renderShell();
   refresh();
 });
-
-async function waitForRuntime() {
-  for (let i = 0; i < 50; i++) {
-    if (window.go && window.go.main && window.runtime) return true;
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  return false;
-}
 
 function showFatal(message) {
   $("error-message").textContent = message;
@@ -72,7 +66,7 @@ function showFatal(message) {
 async function pickRoot() {
   let fresh;
   try {
-    fresh = await window.go.main.App.PickRoot();
+    fresh = await call("PickRoot");
   } catch (err) {
     showFatal(String(err));
     return;
@@ -135,7 +129,7 @@ function renderInstalls() {
 async function reloadInstalls() {
   let fresh;
   try {
-    fresh = await window.go.main.App.Bootstrap();
+    fresh = await call("Bootstrap");
   } catch (err) {
     setRowsBusy(false);
     return;
@@ -224,7 +218,7 @@ function currentChoice() {
 async function refresh() {
   if (running) return;
   const c = currentChoice();
-  plan = await window.go.main.App.Plan(c.toolchain, c.home, c.addToPath);
+  plan = await call("Plan", c.toolchain, c.home, c.addToPath);
   $("command-box").classList.remove("hidden");
   $("command").textContent = plan.ok ? plan.display : plan.message;
   const warn = $("warning");
@@ -257,7 +251,7 @@ async function start() {
   setRowsBusy(true);
   setStatus("正在跑…");
   try {
-    await window.go.main.App.Start(c.toolchain, c.home, c.addToPath);
+    await call("Start", c.toolchain, c.home, c.addToPath);
   } catch (err) {
     appendLine({ stream: "stderr", text: String(err) });
   }
@@ -267,7 +261,7 @@ async function uninstall(inst) {
   if (running) return;
   let preview;
   try {
-    preview = await window.go.main.App.PlanUninstall(inst.home);
+    preview = await call("PlanUninstall", inst.home);
   } catch (err) {
     showLines([{ stream: "stderr", text: String(err) }]);
     return;
@@ -345,7 +339,7 @@ async function confirmRemoval() {
   appendLine({ stream: "system", text: "$ " + $("removal-command").textContent });
   setStatus("正在卸载…");
   try {
-    await window.go.main.App.Uninstall(home);
+    await call("Uninstall", home);
   } catch (err) {
     appendLine({ stream: "stderr", text: String(err) });
   }

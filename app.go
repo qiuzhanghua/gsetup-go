@@ -19,7 +19,7 @@ import (
 	"github.com/qiuzhanghua/gsetup-go/internal/pkgroot"
 	gsrunner "github.com/qiuzhanghua/gsetup-go/internal/runner"
 	"github.com/qiuzhanghua/gsetup-go/internal/wizard"
-	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // App 是绑定给前端的那个对象。
@@ -63,9 +63,11 @@ func NewApp() *App {
 	return a
 }
 
-func (a *App) startup(ctx context.Context) {
+// ServiceStartup 是 v3 的 service 生命周期钩子（v2 的 OnStartup）。
+func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) error {
 	a.ctx = ctx
 	a.ensure()
+	return nil
 }
 
 // ensure 只解析一次包根与清单；解析不了就把话记住，后面每个入口都把它报出来。
@@ -171,11 +173,14 @@ func (a *App) PickRoot() State {
 
 // openDirectoryDialog 是正式实现；测试里换成 pickFolder 那个钩子。
 func (a *App) openDirectoryDialog(ctx context.Context) (string, error) {
-	return wailsruntime.OpenDirectoryDialog(ctx, wailsruntime.OpenDialogOptions{
-		Title:                "选解压出来的那个目录（里面应该有 *-manifest.yaml 与 " + wizard.EntryNames(a.goos) + "）",
-		DefaultDirectory:     a.defaultPickDir(),
-		CanCreateDirectories: false,
-	})
+	_ = ctx // v3 的对话框不需要 context，保留参数是为了和测试里的 pickFolder 钩子同签名。
+	return application.Get().Dialog.OpenFile().
+		SetTitle("选解压出来的那个目录（里面应该有 *-manifest.yaml 与 " + wizard.EntryNames(a.goos) + "）").
+		SetDirectory(a.defaultPickDir()).
+		CanCreateDirectories(false).
+		CanChooseFiles(false).
+		CanChooseDirectories(true).
+		PromptForSingleSelection()
 }
 
 // defaultPickDir 让对话框从最可能的地方开：下载目录。
@@ -581,8 +586,8 @@ func (a *App) Uninstall(home string) gsrunner.Result {
 
 // Quit 是界面 C 上那个"关掉它"的按钮。
 func (a *App) Quit() {
-	if a.ctx != nil {
-		wailsruntime.Quit(a.ctx)
+	if app := application.Get(); app != nil {
+		app.Quit()
 	}
 }
 
@@ -618,8 +623,8 @@ func (a *App) emit(name string, payload any) {
 	if a.emitHook != nil {
 		a.emitHook(name, payload)
 	}
-	if a.ctx != nil {
-		wailsruntime.EventsEmit(a.ctx, name, payload)
+	if app := application.Get(); app != nil {
+		app.Event.Emit(name, payload)
 	}
 }
 

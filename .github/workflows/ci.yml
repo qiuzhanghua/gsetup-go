@@ -34,15 +34,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
 
-      # Ubuntu 24.04 起只有 webkit2gtk-4.1 了，Wails v2 要靠这个 tag 才会去找它
-      # （不加 tag 它要的是 4.0，新镜像上已经没有了）。注意这一条对 vet 也成立：
-      # vet 一样要把每个包编出来。
-      - name: 决定要不要带 webkit2_41
+      # v3 默认要 GTK4 + webkitgtk-6.0，这里装的是 GTK3 + webkit2gtk-4.1，
+      # 所以 Linux 上要带 gtk3。注意这一条对 vet 也成立：vet 一样要把每个包编出来。
+      - name: 决定要不要带 gtk3
         id: tags
         shell: bash
         run: |
           tags=""
-          if [ "${{ runner.os }}" = "Linux" ]; then tags="-tags webkit2_41"; fi
+          if [ "${{ runner.os }}" = "Linux" ]; then tags="-tags gtk3"; fi
           echo "tags=$tags" >> "$GITHUB_OUTPUT"
 
       - name: go vet

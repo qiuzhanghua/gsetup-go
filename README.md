@@ -9,42 +9,45 @@
 
 ## 构建
 
-```sh
-go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0   # 只需要装一次
-wails build -clean                                          # 产物在 build/bin/
-```
-
-macOS 产出 `build/bin/GUI-Setup.app`，Windows 是 `GUI-Setup.exe`，Linux 是 `GUI-Setup`（裸
-可执行文件）。前端产物（`frontend/dist` 与 `frontend/wailsjs`）都在仓库里，
-`wails.json` 的 `frontend:build` 是空的，所以构建**不需要 npm**。
-
-**Linux 上窗口起不来**，多半是缺 WebKitGTK（Wails 的运行时依赖，不是可选项）：
+Wails 已升级到 **v3.0.0**。构建入口是 `wails3`（不是 v2 的 `wails`）：
 
 ```sh
-sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev    # Ubuntu 24.04 起
-wails build -clean -tags webkit2_41                           # 4.0 那一支在新镜像上已经没有了
+go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0   # 只需要装一次
+wails3 build                                                # 产物在 bin/
 ```
 
-**绕开 `wails` 直接 `go build` 时必须自己带 `production`**：wails 内部固定会加这个 tag
-（`cmd/wails/flags/build.go` 的 `GetBuildMode`，除非显式 `-debug`），而 `internal/app/app_default_unix.go`
-的构建约束是 `!dev && !production && !bindings` —— 缺了 `production` 编出来的是个**桩**，
-一跑就打印 `Wails applications will not build without the correct build tags.` 并退出。所以是：
+Linux 注意：v3 默认走 **GTK4 + webkitgtk-6.0**，本机/CI 装的是 GTK3 + webkit2gtk-4.1，
+所以两边都要带 `gtk3` 这个 tag（CLI 自己编的时候也要）：
 
 ```sh
-go build -tags "production webkit2_41" -o build/bin/GUI-Setup .
+sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+go install -tags gtk3 github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
+wails3 build -tags gtk3
 ```
 
-同一个道理让 `go vet ./...` / `go test ./...` 在 Linux 上**绿得没有意义**：不带 `production` 时
-`internal/frontend/desktop` 下面那两个包根本不会被编（`go list -deps .` 里 0 命中），
-`webkit2gtk-4.0` 那个 pkg-config 报错自然也就碰不到。要真正编到 webview 那一层：
+产物：Linux/Windows 是 `bin/GUI-Setup`、`bin/GUI-Setup.exe`；macOS 的 `.app` 由打包任务生成：
 
 ```sh
-go vet  -tags "production webkit2_41" ./...
-go test -tags "production webkit2_41" ./...
+wails3 package        # 产出 bin/GUI-Setup.app
 ```
 
-（CI 里只给了 `webkit2_41`，所以本仓的 vet/test 不覆盖 webview 那一层；真正演练系统依赖的是
-release.yml 的 `wails build`。）
+前端产物（`frontend/dist`）都在仓库里，`build/Taskfile.yml` 里的 `build:frontend` 已被改成
+空操作，所以构建**不需要 npm**，也不用 `wails3 generate bindings`：前端直接
+`import { Call, Events } from "/wails/runtime.js"`，用
+`Call.ByName("main.App.<Method>")` 调 Go 的方法。
+
+**绕开 `wails3` 直接 `go build`** 时同样要自己带 tags（`production` + Linux 的 `gtk3`）：
+
+```sh
+go build -tags "production gtk3" -o bin/GUI-Setup .
+```
+
+CI 里的 vet/test 也带 `gtk3`，否则 Linux 上根本编不到 webview 那一层：
+
+```sh
+go vet  -tags gtk3 ./...
+go test -tags gtk3 ./...
+```
 
 ## 开发与测试
 

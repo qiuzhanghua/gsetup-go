@@ -16,14 +16,26 @@ go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0   # 只需要装一次
 wails3 build                                                # 产物在 bin/
 ```
 
-Linux 注意：v3 默认走 **GTK4 + webkitgtk-6.0**，本机/CI 装的是 GTK3 + webkit2gtk-4.1，
-所以两边都要带 `gtk3` 这个 tag（CLI 自己编的时候也要）：
+Linux 注意：运行时两套 WebKit 是并存的 —— `libwebkit2gtk-4.1-0`（GTK3）和
+`libwebkitgtk-6.0-4`（GTK4），开发包（`libgtk-4-dev`、`libwebkitgtk-6.0-dev`）也都在。
+v3 默认走 GTK4 + webkitgtk-6.0，`wails3 build`（不带 tag）就能编出来。
+
+但本项目**发版仍用 GTK3 + webkit2gtk-4.1**：
+
+- 兼容面更大：Ubuntu 22.04 等只有 4.1 的发行版没有 `libwebkitgtk-6.0-4`；
+- GTK4 那一支在这台机器上起不来：WebKitGTK 6.0 的 bwrap 沙箱在受限用户命名空间里
+  报 `bwrap: setting up uid map: Permission denied`，进程直接 abort；加
+  `WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1` 能跑，但不能让用户去关沙箱。
+
+所以 Linux 构建带 `gtk3`（CLI 自己编的时候也要，因为它也链接 GTK）：
 
 ```sh
 sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
 go install -tags gtk3 github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
 wails3 build -tags gtk3
 ```
+
+想试 GTK4 那一支就去掉 tag（`wails3 build`），运行时可能需要上面那个环境变量。
 
 产物：Linux/Windows 是 `bin/GUI-Setup`、`bin/GUI-Setup.exe`；macOS 的 `.app` 由打包任务生成：
 

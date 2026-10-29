@@ -14,7 +14,7 @@
     !define INFO_PRODUCTNAME "GUI-Setup"
 !endif
 !ifndef INFO_PRODUCTVERSION
-    !define INFO_PRODUCTVERSION "2.0.1"
+    !define INFO_PRODUCTVERSION "2.0.2"
 !endif
 !ifndef INFO_COPYRIGHT
     !define INFO_COPYRIGHT "(c) 2025, My Company"

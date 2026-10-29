@@ -77,10 +77,21 @@ jobs:
 
       - name: 编 GUI-Setup
         shell: bash
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
         run: |
           wails3 build
           # macOS 的 .app 由 package 任务组装（build 只出裸二进制）。
           if [ "$RUNNER_OS" = "macOS" ]; then wails3 package; fi
+          # Linux 额外出一份 GTK3/webkit2gtk-4.1 构建：AI Desk 本体只要 4.1，
+          # 而老发行版没有 GTK4 的 webkitgtk-6.0，双击安装器会缺库。
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            cp bin/GUI-Setup /tmp/GUI-Setup-gtk4
+            wails3 build -tags gtk3
+            mkdir -p dist
+            cp bin/GUI-Setup "dist/GUI-Setup-${VERSION}-linux-${{ matrix.goarch }}-gtk3"
+            cp /tmp/GUI-Setup-gtk4 bin/GUI-Setup
+          fi
           ls -l bin
 
       - name: 打包产物

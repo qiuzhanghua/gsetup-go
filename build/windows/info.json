@@ -1,10 +1,10 @@
 {
 	"fixed": {
-		"file_version": "2.0.1"
+		"file_version": "2.0.2"
 	},
 	"info": {
 		"0409": {
-			"ProductVersion": "2.0.1",
+			"ProductVersion": "2.0.2",
 			"CompanyName": "qiuzhanghua",
 			"FileDescription": "给 gpm 打包出来的 GUI 应用配的图形安装向导",
 			"LegalCopyright": "(c) 2025, My Company",

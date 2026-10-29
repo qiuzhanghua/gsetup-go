@@ -46,14 +46,15 @@ jobs:
       # 徽标 / 关于里的版本号来自 build/config.yml 的 info.version（v3 会把它
       # 写进 Info.plist 与 Windows 资源）。发版的规矩：先把这个号抬好、提交，再打
       # tag。这里对一下，免得发出一个 tag 说 v1.2.0、程序却自报 1.1.0 的包。
-      - name: 算出版本号，并核对 wails.json
+      - name: 算出版本号，并核对 build/config.yml
         id: ver
         shell: bash
         run: |
           tag="${{ github.event.inputs.tag || github.ref_name }}"
           version="${tag#v}"
-          declared=$(sed -n 's/^  version: "\(.*\)"/\1/p' build/config.yml | head -1)
-          echo "tag=$tag，版本=$version，wails.json 里写着 ${declared:-（没读到）}"
+          # 行尾可能跟着注释（version: "2.0.0" # ...），只取引号里的内容。
+          declared=$(sed -n 's/^  version: "\([^"]*\)".*/\1/p' build/config.yml | head -1)
+          echo "tag=$tag，版本=$version，build/config.yml 里写着 ${declared:-（没读到）}"
           if [ "$declared" != "$version" ]; then
             echo "::error::build/config.yml 的 info.version 是「$declared」，tag 却是「$tag」——先把版本号抬上去再打 tag。"
             exit 1

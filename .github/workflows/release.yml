@@ -66,27 +66,18 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
 
       - name: 装 wails3
         shell: bash
         run: |
-          # Linux 上 CLI 自己也链接 GTK，本机是 GTK3 那一支。
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            go install -tags gtk3 github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
-          else
-            go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
-          fi
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: 编 GUI-Setup
         shell: bash
         run: |
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            wails3 build -tags gtk3
-          else
-            wails3 build
-          fi
+          wails3 build
           # macOS 的 .app 由 package 任务组装（build 只出裸二进制）。
           if [ "$RUNNER_OS" = "macOS" ]; then wails3 package; fi
           ls -l bin

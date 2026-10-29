@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"os"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
@@ -10,6 +11,12 @@ import (
 var assets embed.FS
 
 func main() {
+	// 必须在 application.New 之前：WebKit 初始化之后再设环境变量就晚了。
+	if err := prepareWebKitSandbox(); err != nil {
+		println(err.Error())
+		os.Exit(1)
+	}
+
 	app := NewApp()
 
 	wailsApp := application.New(application.Options{

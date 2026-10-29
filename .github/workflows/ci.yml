@@ -32,22 +32,15 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
 
-      # 运行时两套都在，但发版走 GTK3（4.1）兼容老发行版，所以 Linux 上带 gtk3。
-      # 注意这一条对 vet 也成立：vet 一样要把每个包编出来。
-      - name: 决定要不要带 gtk3
-        id: tags
-        shell: bash
-        run: |
-          tags=""
-          if [ "${{ runner.os }}" = "Linux" ]; then tags="-tags gtk3"; fi
-          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+      # 默认发版走 GTK4（webkitgtk-6.0）；GTK3/4.1 只是兼容老发行版的可选构建，
+      # 所以这里不再加 gtk3 tag。沙箱问题由程序启动时自己探测处理。
 
       - name: go vet
-        run: go vet ${{ steps.tags.outputs.tags }} ./...
+        run: go vet ./...
 
       # -v：那几条 pty 用例是按平台跳过的（Windows 上跑不了 #!/bin/sh，那一支
       # 换成真的 cmd.exe），不带 -v 就分不清"跳过了"和"真跑过"。
       - name: go test
-        run: go test -v ${{ steps.tags.outputs.tags }} ./...
+        run: go test -v ./...
